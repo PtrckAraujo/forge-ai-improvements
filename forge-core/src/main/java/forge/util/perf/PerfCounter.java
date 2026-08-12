@@ -51,6 +51,8 @@ public enum PerfCounter {
     EVAL_TIMEOUTS("evalTimeouts"),
     /** Evaluation runs abandoned because they ignored cancellation. */
     EVAL_WORKERS_ABANDONED("evalWorkersAbandoned"),
+    /** Evaluation runs that had to start their own thread because every pooled worker was busy. */
+    EVAL_WORKERS_UNPOOLED("evalWorkersUnpooled"),
 
     // ---- candidate ordering ----
     /** Per-decision comparator facts computed for a spell ability. */
@@ -97,8 +99,6 @@ public enum PerfCounter {
     COMBAT_LOOKAHEAD_COPIES("combatLookaheadCopies"),
     /** {@code GameStateEvaluator.getScoreForGameState} invocations. */
     SCORE_EVALUATIONS("scoreEvaluations"),
-    /** Root scores taken from the caller instead of being re-evaluated per simulation branch. */
-    BASELINE_SCORE_REUSES("baselineScoreReuses"),
     /** Candidate abilities evaluated by the full-simulation picker. */
     SIMULATED_CANDIDATES("simulatedCandidates"),
     /** Individual target/mode branches simulated inside those candidates. */

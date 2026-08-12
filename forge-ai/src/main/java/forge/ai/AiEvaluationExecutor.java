@@ -21,6 +21,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -61,11 +63,21 @@ public final class AiEvaluationExecutor {
 
     private static final AtomicInteger THREAD_INDEX = new AtomicInteger();
 
-    private static final ThreadPoolExecutor WORKERS = new ThreadPoolExecutor(0, Integer.MAX_VALUE,
+    /**
+     * Ceiling on pooled workers. Concurrent evaluations are bounded by simulation nesting depth in
+     * practice, but a worker that ignored cancellation is never returned to the pool, so without a
+     * ceiling a long session that hit that repeatedly would keep growing the pool. Past the ceiling
+     * the executor rejects and the caller falls back to a thread of its own, which is exactly what
+     * every decision used to do.
+     */
+    private static final int MAX_WORKERS = 8;
+
+    private static final ThreadPoolExecutor WORKERS = new ThreadPoolExecutor(0, MAX_WORKERS,
             IDLE_TIMEOUT_SECONDS, TimeUnit.SECONDS,
             // A synchronous queue is what makes this grow on demand: a task is either taken by an
             // idle worker immediately or a new worker is started for it, and it is never left
-            // waiting behind a busy one.
+            // waiting behind a busy one. Queueing would be wrong here - a queued decision would wait
+            // for an unrelated one to finish, behind the caller's own timeout.
             new SynchronousQueue<>(),
             runnable -> {
                 final Thread t = new Thread(runnable, THREAD_NAME_PREFIX + "-" + THREAD_INDEX.incrementAndGet());
@@ -98,7 +110,7 @@ public final class AiEvaluationExecutor {
         private volatile Thread runningThread;
 
         private Evaluation(final Callable<T> body) {
-            future = WORKERS.submit(() -> {
+            final Callable<T> tracked = () -> {
                 runningThread = Thread.currentThread();
                 try {
                     return body.call();
@@ -106,7 +118,21 @@ public final class AiEvaluationExecutor {
                     runningThread = null;
                     finished.countDown();
                 }
-            });
+            };
+            Future<T> submitted;
+            try {
+                submitted = WORKERS.submit(tracked);
+            } catch (final RejectedExecutionException tooBusy) {
+                // every worker is occupied: run this decision on a thread of its own, the way each
+                // decision always used to, rather than making it wait behind an unrelated one
+                PerfProbe.count(PerfCounter.EVAL_WORKERS_UNPOOLED);
+                final FutureTask<T> task = new FutureTask<>(tracked);
+                final Thread t = new Thread(task, THREAD_NAME_PREFIX + "-" + THREAD_INDEX.incrementAndGet());
+                t.setDaemon(true);
+                t.start();
+                submitted = task;
+            }
+            future = submitted;
         }
 
         /** As {@link Future#get(long, TimeUnit)}. */

@@ -175,6 +175,11 @@ public class AiPhase1OptimizationTest extends AITest {
      * Reusing one structural cost adjustment across the two halves of a feasibility check must not
      * change what the AI believes it can pay for. Assertions are on under Surefire, so every reuse
      * this exercises is additionally shadow-checked against adjusting a second time.
+     *
+     * <p>The board deliberately carries both cases the guard separates: permanents with activated
+     * abilities, where the mana check and the additional-cost check adjust in the same context and
+     * the reuse is taken, and spells in hand, where the mana check repoints the host's "cast from"
+     * and the reuse is declined.</p>
      */
     @Test(timeOut = 300000)
     public void reusedCostAdjustmentGivesTheSamePayableVerdict() {
@@ -186,6 +191,9 @@ public class AiPhase1OptimizationTest extends AITest {
             addCard("Forest", ai);
         }
         addCard("Grizzly Bears", ai);
+        // activated abilities: the case the guard can prove equivalent
+        addCard("Prodigal Sorcerer", ai).setSickness(false);
+        addCard("Icy Manipulator", ai);
         addCardToZone("Lightning Bolt", ai, ZoneType.Hand);
         addCardToZone("Shock", ai, ZoneType.Hand);
         addCardToZone("Giant Growth", ai, ZoneType.Hand);
@@ -221,8 +229,12 @@ public class AiPhase1OptimizationTest extends AITest {
         }
 
         Assert.assertTrue(checked > 0, "the fixture must produce abilities with a cost to check");
-        Assert.assertTrue(PerfProbe.getGlobal().get(PerfCounter.COST_ADJUSTMENT_REUSES) > 0L,
-                "no adjustment was actually reused, so this proved nothing");
+        final long reuses = PerfProbe.getGlobal().get(PerfCounter.COST_ADJUSTMENT_REUSES);
+        Assert.assertTrue(reuses > 0L, "no adjustment was actually reused, so this proved nothing");
+        // ...and the guard is a guard: the spells in hand must not have taken the fast path, or it
+        // is no longer only allowing the case it can prove
+        Assert.assertTrue(reuses < checked,
+                "every check reused, so the cast-from guard is not actually excluding anything");
     }
 
     /**

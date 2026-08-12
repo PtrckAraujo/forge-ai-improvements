@@ -80,6 +80,10 @@ forge bench -d ... -s 7 -n 20 -t -o optimised
 diff baseline/trace.jsonl optimised/trace.jsonl
 ```
 
+Compare builds with **assertions disabled** (`-da`, and `-DenableAssertions=false` under Surefire).
+Shadow checks recompute the very work an optimisation avoids, so an assertions-on comparison cannot
+see a work-elimination change — it will report parity whether or not the change works.
+
 An empty diff means the ordered candidate lists, heuristic verdicts, chosen abilities, declared
 attackers and blockers, simulated branch scores and RNG draws all matched. Then re-run **without**
 `-t` on both builds to compare timings; tracing builds strings on decision paths and must never be
@@ -167,7 +171,16 @@ lookahead. Timers must not be summed across the enum and presented as a decision
 
 **What the digest covers.** Turn, phase, active and priority player, each player's life and counters,
 every zone's contents in zone order (including hidden zones — library order changes later decisions),
-per-card identity/name/owner/controller/tapped/sick/face-down/phased-out/timestamp/counters, the
-stack, and combat with ordered blockers. Derived characteristics such as computed power/toughness are
-deliberately excluded: reading them can trigger recalculation, and they are a function of the state
-that is captured anyway.
+per-card identity/name/owner/controller/tapped/sick/face-down/phased-out/counters, the timestamp
+*rank*, the stack, and combat with ordered blockers.
+
+**Why rank and not the timestamp.** Timestamps are a monotonic per-game counter and the rules only
+use them for relative order. Their absolute values also depend on how much hypothetical work the AI
+did: simulating a combat inside a copied game draws from the *original* game's counter (measured at
++5 per evaluation with combat lookahead), so two builds that make a different number of copies stamp
+the same card in the same state with different numbers. Recording the rank keeps every reordering
+visible — the part that could change a game — and drops the part that only records how the answer was
+reached.
+
+Derived characteristics such as computed power/toughness are deliberately excluded: reading them can
+trigger recalculation, and they are a function of the state that is captured anyway.
