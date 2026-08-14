@@ -129,3 +129,43 @@ hit four AI evaluation `TimeoutException`s during game one, while both optimized
 none. The faster build therefore entered later games without the baseline's timeout-dependent
 state; this is a time-budget effect rather than evidence that the cached builders changed rules or
 AI choice semantics.
+
+## Integration validation
+
+The cache landed on `master` from PR #3, and two independent lines of follow-up work then existed
+against it: a rebuild-and-compare shadow check with a scenario audit (PR #4), and a read-only
+ownership hardening (PR #5). They solved overlapping problems in `CardState` and could not both be
+merged as written. The combined branch keeps the hardening's mechanism and the shadow check's proof:
+
+- `UnmodifiableFCollectionView` wraps each cached view instead of copying it into a read-only
+  subclass on every rebuild. The wrapper is reusable, allocates one delegating object rather than a
+  fresh collection, and the discarded `ReadOnlyFCollection` had no coverage the wrapper's own tests
+  do not already provide.
+- Each getter now builds through a private `buildXxx()`, and a cache hit asserts the cached view
+  still equals what building it now would produce — by identity, in order. Assertions are enabled
+  under Surefire, so the whole rules and AI corpus audits the mutator set; a shipped build pays
+  nothing.
+- The publication guard and the generation stamp are kept as written. They are two halves of one
+  mechanism and either half alone is sufficient, which the kill matrix below confirms.
+
+### Kill matrix
+
+Every guard was removed in turn to establish that the tests fail when the property stops holding,
+rather than passing vacuously. Failure counts are from the `forge-game` suite (25 tests).
+
+| Mutation | Result |
+|---|---|
+| `CardState.invalidateTraitCache()` made a no-op | **Killed** — 9 failures, all `stale cached triggers` / `stale cached replacement effects` |
+| `Card.setCounters` invalidations removed (both overloads) | **Killed** — 2 failures on the generated-replacement scenarios |
+| `Card.removeChangedCardTraits` invalidation removed | **Killed** — 1 failure, `changedTraitLayersInvalidateEveryDerivedView` |
+| Publication guard removed, generation stamp kept | **Survives** — redundant by design: an obsolete view may be published, but the stamp means no later read accepts it |
+| Both halves of the generation mechanism removed | **Killed** — 1 failure, `obsoleteConcurrentRebuildCannotBeRepublished` |
+| `FCollectionView.unmodifiable` returns the live collection | **Killed** — 1 failure, `cachedViewsRejectEveryCollectionMutation` |
+| `GameEntity` counters aliased rather than copied | **Killed** — 2 failures, including `twoCardsCannotAliasCountersOrLeaveTheSecondCacheStale` |
+
+The surviving mutation is the one case where a guard is deliberately redundant, and the entry below
+it proves the property it defends is still enforced by the other half. The combined branch runs 25
+`forge-game` tests and 375 desktop tests with no failures and six skips, assertions enabled.
+
+Timing is still unmeasured on this revision. The reproduction runbook above needs a machine that is
+not sharing CPU, which no session so far has had.
