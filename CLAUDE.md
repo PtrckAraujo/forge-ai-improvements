@@ -6,6 +6,13 @@
 repository may be pushed to, or opened as a pull request against, the upstream project.** Not a
 branch, not a tag, not a pull request base.
 
+**This has already happened once.** `Card-Forge/forge#11612` was opened from
+`PtrckAraujo:validate-pr3` into `Card-Forge:master`, carrying ten commits of fork-only work, and an
+upstream contributor had to point it out. Nothing was pushed upstream to cause it: a pull request is
+an object that lives in the *target* repository and merely points at a branch in the fork. So
+"nothing was pushed there" and "no branch of ours exists there" are both true and both prove
+nothing — the only check that matters is the base repository on the pull request itself.
+
 That applies to every route, not only `git push`:
 
 - **Remotes.** `origin` is the only remote, and it points at
@@ -16,6 +23,9 @@ That applies to every route, not only `git push`:
   creating a PR. This is the easiest way to get it wrong, because the wrong answer is the default.
 - **GitHub API/MCP tools.** `owner` must be `PtrckAraujo` and `repo` must be
   `forge-ai-improvements` on anything that writes.
+- **Verifying.** The header of a pull request reads `wants to merge N commits into X from Y`. `X`
+  must be `PtrckAraujo:master`. If it says `Card-Forge:master`, the pull request is in the wrong
+  repository and closing it is the fix — the branch itself is fine and stays where it is.
 
 Two mechanisms enforce this, and neither replaces reading the above:
 
