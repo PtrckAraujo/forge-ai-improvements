@@ -45,10 +45,21 @@ could otherwise survive `clearCounters`, a perpetual trait could be removed with
 cache, Original could retain traits from a removed split state, and an active cloned face could keep
 a view that was absent from the base-state map.
 
-Cached views hold only traits already owned by the same card/state. They are exposed through Forge's
-read-only `FCollectionView` contract, and the repository-wide call-site audit found no consumer that
-mutates a returned trigger/static/replacement collection. Game copies build their own states and do
-not share cached collection objects.
+Cached views hold only traits already owned by the same card/state. They are exposed through a
+concrete unmodifiable `FCollectionView` facade: collection mutators and iterator removal throw
+`UnsupportedOperationException`, so a caller cannot poison the retained result even by downcasting
+or ignoring the read-only API convention. Game copies build their own states and do not share cached
+collection objects.
+
+Counter collections follow the same ownership boundary. Bulk counter assignment copies with
+`HashMultiset.create`, and `getCounters()` exposes an unmodifiable live view. Consequently,
+`target.setCounters(source.getCounters())` cannot make two cards share a counter bag and leave one
+card's trait cache stale when the other changes.
+
+Cache entries also carry an invalidation generation. Card state remains game-thread confined, but a
+diagnostic or simulation read that overlaps a mutation cannot republish an obsolete rebuild as a
+future cache hit: the entry's generation will no longer match. Mutations publish their new type,
+keyword or counter input before advancing that generation.
 
 ## Measurement counters
 
@@ -67,10 +78,19 @@ profiled for mutation churn before extending this cache to any other derived sta
 `forge.game.card.CardStateTraitCacheTest` verifies:
 
 - all four views are reused and the hit/rebuild counters engage;
+- every collection mutation surface, including iterator removal, is rejected without poisoning a
+  retained view;
 - adding and removing layer-derived triggers/statics/replacements changes every affected view;
-- clearing shield counters removes their generated replacement effects;
-- adding, mutating and removing a split state updates Original's merged trigger view;
-- card-wide mutation also invalidates states stored in `CardCloneStates`.
+- bulk assignment and clearing of shield, stun and finality counters rebuild the rules-host view but
+  do not add those effects to the plain view;
+- two cards cannot alias a counter bag or leave the second card's replacement cache stale;
+- planeswalker, battle, Saga, Read ahead, Adventure and Omen transitions preserve the semantic
+  difference between rules-host and plain caches;
+- adding, mutating and removing a split state updates Original's merged trigger, static and
+  replacement views;
+- copy, add-abilities, bulk changed-trait, clear, perpetual and clone-state paths invalidate the
+  destination views; and
+- a deterministic concurrent interleaving cannot retain an obsolete rebuild.
 
 The existing AI instrumentation test remains the end-to-end guard: an optimized build must produce
 the same canonical game digest and byte-identical ordered decision trace as its baseline.
@@ -94,3 +114,18 @@ diff baseline/trace.jsonl trait-cache/trace.jsonl
 Only after the trace diff is empty, repeat without `-t` on a quiet machine, alternate build order,
 and compare `traitCacheHits`, `traitCacheRebuilds`, decision latency, total game time and allocation.
 The historical 2.15x result is a hypothesis to reproduce, not the acceptance threshold.
+
+## Post-merge validation
+
+Independent fixed-seed validation of the merged cache change measured a 24.21% reduction in summed
+game time, 17.74% lower wall time and 8.72% lower user CPU across the direct ABBA corpus. All eight
+fixture winner/turn tuples matched, and measured cache-hit share was 99.596% to 99.869%. The broad
+direct corpus measured 22.16% lower game time and 18.77% lower wall time. The serialized desktop
+suite completed 361 tests with no failures and six skips.
+
+The three-game Breya batch differed after game one, while isolated fixed-seed runs produced
+byte-identical decision traces. The batch logs explain the difference: both baseline repetitions
+hit four AI evaluation `TimeoutException`s during game one, while both optimized repetitions hit
+none. The faster build therefore entered later games without the baseline's timeout-dependent
+state; this is a time-budget effect rather than evidence that the cached builders changed rules or
+AI choice semantics.

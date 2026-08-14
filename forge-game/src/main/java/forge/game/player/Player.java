@@ -942,7 +942,7 @@ public class Player extends GameEntity implements Comparable<Player> {
 
     @Override
     public void setCounters(Multiset<CounterType> allCounters) {
-        counters = allCounters;
+        replaceCounters(allCounters);
         view.updateCounters(this);
         getGame().fireEvent(new GameEventPlayerCounters(this, null, 0, 0));
 
