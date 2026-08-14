@@ -3,6 +3,7 @@ package forge.util.collect;
 import java.util.Collection;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
@@ -10,6 +11,22 @@ import java.util.stream.Stream;
  * Read-only interface to an {@link FCollection}.
  */
 public interface FCollectionView<T> extends Collection<T> {
+    /**
+     * Return a view that delegates reads to {@code source} and rejects every collection mutation.
+     *
+     * <p>The {@link FCollectionView} type is a read-only API convention, but its historical
+     * implementation is also an {@link FCollection} and can therefore be mutated by callers. Use
+     * this wrapper when a derived or cached collection must not be changed through the returned
+     * reference.</p>
+     */
+    static <T> FCollectionView<T> unmodifiable(final FCollectionView<T> source) {
+        Objects.requireNonNull(source);
+        if (source instanceof UnmodifiableFCollectionView<?>) {
+            return source;
+        }
+        return new UnmodifiableFCollectionView<>(source);
+    }
+
     /**
      * @see Collection#isEmpty()
      */

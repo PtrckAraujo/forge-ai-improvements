@@ -48,6 +48,8 @@ import forge.util.ITranslatable;
 import forge.util.IterableUtil;
 import forge.util.collect.FCollection;
 import forge.util.collect.FCollectionView;
+import forge.util.perf.PerfCounter;
+import forge.util.perf.PerfProbe;
 import io.sentry.Breadcrumb;
 import io.sentry.Sentry;
 
@@ -112,6 +114,41 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
     // wrapped in a List so it can be reused directly
     private List<LandTraitChanges> landTraitChanges = List.of(new LandTraitChanges(this));
 
+    // These views are expensive to derive from the layer system and almost always remain unchanged
+    // between reads. Keep one result per CardState and invalidate it whenever an input changes.
+    private volatile CachedTraitView<ReplacementEffect> cachedReplacementsAsRulesHost;
+    private volatile CachedTraitView<ReplacementEffect> cachedReplacementsPlain;
+    private volatile CachedTraitView<StaticAbility> cachedStaticAbilities;
+    private volatile CachedTraitView<Trigger> cachedTraitTriggers;
+    private volatile long traitCacheGeneration;
+
+    private static final class CachedTraitView<T> {
+        private final long generation;
+        private final FCollectionView<T> view;
+
+        private CachedTraitView(final long generation0, final FCollectionView<T> view0) {
+            generation = generation0;
+            view = view0;
+        }
+    }
+
+    /**
+     * Drop every derived trait view so it is rebuilt lazily on its next access.
+     *
+     * <p>Raw traits from split states are merged into the Original state, so callers that mutate a
+     * raw trait use {@link Card#invalidateTraitCaches()} rather than invalidating only this state.
+     * Card mutations are game-thread confined. The generation still makes an obsolete rebuild
+     * harmless if diagnostic or simulation work overlaps an invalidation: an old view may be
+     * published, but no later read can accept it as current.</p>
+     */
+    final synchronized void invalidateTraitCache() {
+        traitCacheGeneration++;
+        cachedReplacementsAsRulesHost = null;
+        cachedReplacementsPlain = null;
+        cachedStaticAbilities = null;
+        cachedTraitTriggers = null;
+    }
+
     public CardState(Card card, CardStateName name) {
         this(card.getView().createAlternateState(name), card);
     }
@@ -154,6 +191,9 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
 
     public void updateTypes() {
         this.changedType = getType().getTypeWithChanges(card.getChangedCardTypes());
+        // Type contributes generated replacement effects (planeswalker, battle, Saga,
+        // Adventure/Omen) and the basic-land trait changes.
+        invalidateTraitCache();
     }
     public void updateTypesForView() {
         view.updateType(this);
@@ -673,6 +713,13 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
     }
 
     public final FCollectionView<Trigger> getTriggers() {
+        final long generation = traitCacheGeneration;
+        final CachedTraitView<Trigger> cached = cachedTraitTriggers;
+        if (cached != null && cached.generation == generation) {
+            PerfProbe.count(PerfCounter.TRAIT_CACHE_HITS);
+            return cached.view;
+        }
+        PerfProbe.count(PerfCounter.TRAIT_CACHE_REBUILDS);
         FCollection<Trigger> result = new FCollection<>(triggers);
         if (getStateName().equals(CardStateName.Original)) {
             if (getCard().hasState(CardStateName.LeftSplit))
@@ -681,7 +728,11 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
                 result.addAll(getCard().getState(CardStateName.RightSplit).triggers);
         }
         card.updateTriggers(result, this);
-        return result;
+        final FCollectionView<Trigger> view = FCollectionView.unmodifiable(result);
+        if (traitCacheGeneration == generation) {
+            cachedTraitTriggers = new CachedTraitView<>(generation, view);
+        }
+        return view;
     }
 
     public final boolean hasTrigger(final Trigger t) {
@@ -698,10 +749,21 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
     }
 
     public final boolean addTrigger(final Trigger t) {
-        return triggers.add(t);
+        final boolean changed = triggers.add(t);
+        if (changed) {
+            card.invalidateTraitCaches();
+        }
+        return changed;
     }
 
     public final FCollectionView<StaticAbility> getStaticAbilities() {
+        final long generation = traitCacheGeneration;
+        final CachedTraitView<StaticAbility> cached = cachedStaticAbilities;
+        if (cached != null && cached.generation == generation) {
+            PerfProbe.count(PerfCounter.TRAIT_CACHE_HITS);
+            return cached.view;
+        }
+        PerfProbe.count(PerfCounter.TRAIT_CACHE_REBUILDS);
         FCollection<StaticAbility> result = new FCollection<>(staticAbilities);
         if (getStateName().equals(CardStateName.Original)) {
             if (getCard().hasState(CardStateName.LeftSplit))
@@ -710,19 +772,40 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
                 result.addAll(getCard().getState(CardStateName.RightSplit).staticAbilities);
         }
         card.updateStaticAbilities(result, this);
-        return result;
+        final FCollectionView<StaticAbility> view = FCollectionView.unmodifiable(result);
+        if (traitCacheGeneration == generation) {
+            cachedStaticAbilities = new CachedTraitView<>(generation, view);
+        }
+        return view;
     }
     public final boolean addStaticAbility(StaticAbility stab) {
-        return staticAbilities.add(stab);
+        final boolean changed = staticAbilities.add(stab);
+        if (changed) {
+            card.invalidateTraitCaches();
+        }
+        return changed;
     }
     public final boolean removeStaticAbility(StaticAbility stab) {
-        return staticAbilities.remove(stab);
+        final boolean changed = staticAbilities.remove(stab);
+        if (changed) {
+            card.invalidateTraitCaches();
+        }
+        return changed;
     }
 
     public FCollectionView<ReplacementEffect> getReplacementEffects() {
         return getReplacementEffects(true);
     }
     public FCollectionView<ReplacementEffect> getReplacementEffects(boolean rulesHost) {
+        // rulesHost adds global Adventure/Omen rules, so the two results are cached separately.
+        final long generation = traitCacheGeneration;
+        final CachedTraitView<ReplacementEffect> cached =
+                rulesHost ? cachedReplacementsAsRulesHost : cachedReplacementsPlain;
+        if (cached != null && cached.generation == generation) {
+            PerfProbe.count(PerfCounter.TRAIT_CACHE_HITS);
+            return cached.view;
+        }
+        PerfProbe.count(PerfCounter.TRAIT_CACHE_REBUILDS);
         FCollection<ReplacementEffect> result = new FCollection<>(replacementEffects);
         // add Split to Original
         if (getStateName().equals(CardStateName.Original)) {
@@ -754,7 +837,11 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
         card.updateReplacementEffects(result, this, rulesHost);
 
         if (!rulesHost) {
-            return result;
+            final FCollectionView<ReplacementEffect> view = FCollectionView.unmodifiable(result);
+            if (traitCacheGeneration == generation) {
+                cachedReplacementsPlain = new CachedTraitView<>(generation, view);
+            }
+            return view;
         }
 
         // below are global rules
@@ -771,10 +858,18 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
             result.add(omenRep);
         }
 
-        return result;
+        final FCollectionView<ReplacementEffect> view = FCollectionView.unmodifiable(result);
+        if (traitCacheGeneration == generation) {
+            cachedReplacementsAsRulesHost = new CachedTraitView<>(generation, view);
+        }
+        return view;
     }
     public boolean addReplacementEffect(final ReplacementEffect replacementEffect) {
-        return replacementEffects.add(replacementEffect);
+        final boolean changed = replacementEffects.add(replacementEffect);
+        if (changed) {
+            card.invalidateTraitCaches();
+        }
+        return changed;
     }
 
     public final boolean hasReplacementEffect(final ReplacementEffect re) {
@@ -946,6 +1041,7 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
                 omenRep = source.omenRep.copy(card, true);
             }
         }
+        card.invalidateTraitCaches();
     }
 
     public final void addAbilitiesFrom(final CardState source, final boolean lki) {
@@ -976,6 +1072,7 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
                 staticAbilities.add(sa.copy(card, lki));
             }
         }
+        card.invalidateTraitCaches();
     }
 
     public CardState copy(final Card host, CardStateName name, final boolean lki) {

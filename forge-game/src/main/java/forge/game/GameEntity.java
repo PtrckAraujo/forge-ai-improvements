@@ -25,6 +25,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multiset;
+import com.google.common.collect.Multisets;
 
 import forge.game.ability.AbilityKey;
 import forge.game.ability.AbilityUtils;
@@ -53,6 +54,7 @@ public abstract class GameEntity implements GameObject, IIdentifiable {
     private String name = "";
     protected CardCollection attachedCards = new CardCollection();
     protected Multiset<CounterType> counters = HashMultiset.create();
+    private Multiset<CounterType> countersView = Multisets.unmodifiableMultiset(counters);
     protected List<Pair<Integer, Boolean>> damageReceivedThisTurn = Lists.newArrayList();
 
     protected GameEntity(int id0) {
@@ -311,7 +313,13 @@ public abstract class GameEntity implements GameObject, IIdentifiable {
 
     // get all counters from a card
     public final Multiset<CounterType> getCounters() {
-        return counters;
+        return countersView;
+    }
+
+    /** Replace this entity's counters with an owned copy and expose only its read-only view. */
+    protected final void replaceCounters(final Multiset<CounterType> allCounters) {
+        counters = HashMultiset.create(allCounters);
+        countersView = Multisets.unmodifiableMultiset(counters);
     }
 
     // get total number of all counters on an entity
