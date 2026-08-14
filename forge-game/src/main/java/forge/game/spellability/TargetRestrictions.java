@@ -585,6 +585,17 @@ public class TargetRestrictions {
      * @return {@code getNumCandidates(sa) >= required}
      */
     public final boolean hasAtLeastCandidates(final SpellAbility sa, final int required) {
+        final boolean answer = countAtLeastCandidates(sa, required);
+        // Stopping early is only equivalent if the predicates it stops calling have no effect the
+        // caller could observe. With assertions on - which is how the test suite runs - count the
+        // whole thing as well and require the same answer, so that any such effect shows up as a
+        // failure over the entire corpus rather than as a behaviour change nobody looked for.
+        assert answer == (getNumCandidates(sa) >= required)
+                : "bounded target traversal disagreed with the full count for " + sa;
+        return answer;
+    }
+
+    private boolean countAtLeastCandidates(final SpellAbility sa, final int required) {
         final long token = PerfProbe.start(PerfTimer.TARGET_CANDIDATES);
         int visited = 0;
         try {

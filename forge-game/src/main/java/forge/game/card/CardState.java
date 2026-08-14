@@ -56,6 +56,7 @@ import io.sentry.Sentry;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -116,22 +117,62 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
 
     // These views are expensive to derive from the layer system and almost always remain unchanged
     // between reads. Keep one result per CardState and invalidate it whenever an input changes.
-    private FCollectionView<ReplacementEffect> cachedReplacementsAsRulesHost;
-    private FCollectionView<ReplacementEffect> cachedReplacementsPlain;
-    private FCollectionView<StaticAbility> cachedStaticAbilities;
-    private FCollectionView<Trigger> cachedTraitTriggers;
+    private volatile CachedTraitView<ReplacementEffect> cachedReplacementsAsRulesHost;
+    private volatile CachedTraitView<ReplacementEffect> cachedReplacementsPlain;
+    private volatile CachedTraitView<StaticAbility> cachedStaticAbilities;
+    private volatile CachedTraitView<Trigger> cachedTraitTriggers;
+    private volatile long traitCacheGeneration;
+
+    private static final class CachedTraitView<T> {
+        private final long generation;
+        private final FCollectionView<T> view;
+
+        private CachedTraitView(final long generation0, final FCollectionView<T> view0) {
+            generation = generation0;
+            view = view0;
+        }
+    }
 
     /**
      * Drop every derived trait view so it is rebuilt lazily on its next access.
      *
      * <p>Raw traits from split states are merged into the Original state, so callers that mutate a
-     * raw trait use {@link Card#invalidateTraitCaches()} rather than invalidating only this state.</p>
+     * raw trait use {@link Card#invalidateTraitCaches()} rather than invalidating only this state.
+     * Card mutations are game-thread confined. The generation still makes an obsolete rebuild
+     * harmless if diagnostic or simulation work overlaps an invalidation: an old view may be
+     * published, but no later read can accept it as current.</p>
      */
-    final void invalidateTraitCache() {
+    final synchronized void invalidateTraitCache() {
+        traitCacheGeneration++;
         cachedReplacementsAsRulesHost = null;
         cachedReplacementsPlain = null;
         cachedStaticAbilities = null;
         cachedTraitTriggers = null;
+    }
+
+    /**
+     * Whether a cached view still equals what building it now would produce, element for element and
+     * in order.
+     *
+     * <p>Only ever called from an {@code assert}. The plan makes this the merge gate for this cache:
+     * a complete audit of every mutator that can change a derived trait view is not something anyone
+     * can do by reading, so a debug build rebuilds each view on every read and fails loudly if an
+     * invalidation was missed. Assertions are enabled under Surefire, which turns the whole rules and
+     * AI corpus into that audit; a shipped build pays nothing.</p>
+     */
+    private static boolean stillCurrent(final FCollectionView<?> cached, final FCollectionView<?> rebuilt) {
+        if (cached.size() != rebuilt.size()) {
+            return false;
+        }
+        final Iterator<?> a = cached.iterator();
+        final Iterator<?> b = rebuilt.iterator();
+        while (a.hasNext() && b.hasNext()) {
+            // identity, not equality: a rebuilt view must hand back the same trait objects
+            if (a.next() != b.next()) {
+                return false;
+            }
+        }
+        return !a.hasNext() && !b.hasNext();
     }
 
     public CardState(Card card, CardStateName name) {
@@ -698,11 +739,23 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
     }
 
     public final FCollectionView<Trigger> getTriggers() {
-        if (cachedTraitTriggers != null) {
+        final long generation = traitCacheGeneration;
+        final CachedTraitView<Trigger> cached = cachedTraitTriggers;
+        if (cached != null && cached.generation == generation) {
             PerfProbe.count(PerfCounter.TRAIT_CACHE_HITS);
-            return cachedTraitTriggers;
+            assert stillCurrent(cached.view, buildTriggers())
+                    : "stale cached triggers on " + this;
+            return cached.view;
         }
         PerfProbe.count(PerfCounter.TRAIT_CACHE_REBUILDS);
+        final FCollectionView<Trigger> view = FCollectionView.unmodifiable(buildTriggers());
+        if (traitCacheGeneration == generation) {
+            cachedTraitTriggers = new CachedTraitView<>(generation, view);
+        }
+        return view;
+    }
+
+    private FCollection<Trigger> buildTriggers() {
         FCollection<Trigger> result = new FCollection<>(triggers);
         if (getStateName().equals(CardStateName.Original)) {
             if (getCard().hasState(CardStateName.LeftSplit))
@@ -711,7 +764,6 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
                 result.addAll(getCard().getState(CardStateName.RightSplit).triggers);
         }
         card.updateTriggers(result, this);
-        cachedTraitTriggers = result;
         return result;
     }
 
@@ -737,11 +789,23 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
     }
 
     public final FCollectionView<StaticAbility> getStaticAbilities() {
-        if (cachedStaticAbilities != null) {
+        final long generation = traitCacheGeneration;
+        final CachedTraitView<StaticAbility> cached = cachedStaticAbilities;
+        if (cached != null && cached.generation == generation) {
             PerfProbe.count(PerfCounter.TRAIT_CACHE_HITS);
-            return cachedStaticAbilities;
+            assert stillCurrent(cached.view, buildStaticAbilities())
+                    : "stale cached static abilities on " + this;
+            return cached.view;
         }
         PerfProbe.count(PerfCounter.TRAIT_CACHE_REBUILDS);
+        final FCollectionView<StaticAbility> view = FCollectionView.unmodifiable(buildStaticAbilities());
+        if (traitCacheGeneration == generation) {
+            cachedStaticAbilities = new CachedTraitView<>(generation, view);
+        }
+        return view;
+    }
+
+    private FCollection<StaticAbility> buildStaticAbilities() {
         FCollection<StaticAbility> result = new FCollection<>(staticAbilities);
         if (getStateName().equals(CardStateName.Original)) {
             if (getCard().hasState(CardStateName.LeftSplit))
@@ -750,7 +814,6 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
                 result.addAll(getCard().getState(CardStateName.RightSplit).staticAbilities);
         }
         card.updateStaticAbilities(result, this);
-        cachedStaticAbilities = result;
         return result;
     }
     public final boolean addStaticAbility(StaticAbility stab) {
@@ -773,13 +836,30 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
     }
     public FCollectionView<ReplacementEffect> getReplacementEffects(boolean rulesHost) {
         // rulesHost adds global Adventure/Omen rules, so the two results are cached separately.
-        final FCollectionView<ReplacementEffect> cached =
+        final long generation = traitCacheGeneration;
+        final CachedTraitView<ReplacementEffect> cached =
                 rulesHost ? cachedReplacementsAsRulesHost : cachedReplacementsPlain;
-        if (cached != null) {
+        if (cached != null && cached.generation == generation) {
             PerfProbe.count(PerfCounter.TRAIT_CACHE_HITS);
-            return cached;
+            assert stillCurrent(cached.view, buildReplacementEffects(rulesHost))
+                    : "stale cached replacement effects (rulesHost=" + rulesHost + ") on " + this;
+            return cached.view;
         }
         PerfProbe.count(PerfCounter.TRAIT_CACHE_REBUILDS);
+        final FCollectionView<ReplacementEffect> view =
+                FCollectionView.unmodifiable(buildReplacementEffects(rulesHost));
+        if (traitCacheGeneration == generation) {
+            final CachedTraitView<ReplacementEffect> entry = new CachedTraitView<>(generation, view);
+            if (rulesHost) {
+                cachedReplacementsAsRulesHost = entry;
+            } else {
+                cachedReplacementsPlain = entry;
+            }
+        }
+        return view;
+    }
+
+    private FCollection<ReplacementEffect> buildReplacementEffects(boolean rulesHost) {
         FCollection<ReplacementEffect> result = new FCollection<>(replacementEffects);
         // add Split to Original
         if (getStateName().equals(CardStateName.Original)) {
@@ -811,7 +891,6 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
         card.updateReplacementEffects(result, this, rulesHost);
 
         if (!rulesHost) {
-            cachedReplacementsPlain = result;
             return result;
         }
 
@@ -829,7 +908,6 @@ public class CardState implements GameObject, IHasSVars, ITranslatable {
             result.add(omenRep);
         }
 
-        cachedReplacementsAsRulesHost = result;
         return result;
     }
     public boolean addReplacementEffect(final ReplacementEffect replacementEffect) {

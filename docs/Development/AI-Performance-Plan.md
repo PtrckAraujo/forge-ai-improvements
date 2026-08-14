@@ -40,25 +40,36 @@ since moved, an **Implemented** note says how.
 | 2 — redundant computation, allocations, and caching | In progress; trait-view cache done | [AI-Performance-Phase2.md](AI-Performance-Phase2.md) |
 | 3 to 5 | Not started | — |
 
-Three findings from phase 1 change what a later phase should assume:
+Four findings from phase 1 change what a later phase should assume:
 
-1. **The baseline-invariance premise in §3.1 and §10.1 is false at decision scope.** The shadow
-   assertion the plan required was written first and it failed: on a full board with recursive
-   simulation, the score evaluated at the top of `chooseSpellAbilityToPlay` no longer matches a fresh
-   evaluation by the time the branches run, because deciding whether each candidate can be played and
-   paid for touches state the evaluator reads. The plan's fallback — narrow the scope or abandon —
-   was taken: reuse is scoped to the branches of one candidate. Any later work that wants to treat an
-   evaluator result as stable across a decision has to prove that separately.
+1. **The baseline-invariance premise in §3.1 and §10.1 is false, and the optimisation was not needed
+   anyway.** The shadow assertion the plan required was written first and it failed: on a full board
+   with recursive simulation, the score evaluated at the top of `chooseSpellAbilityToPlay` no longer
+   matches a fresh evaluation by the time the branches run, because deciding whether each candidate
+   can be played and paid for touches state the evaluator reads. Narrowing the reuse to one
+   candidate's branches passed, but reading the callers showed something better: `GameSimulator`'s
+   score of the original game is never read on the shipped path at all. It is now derived on demand,
+   which removes more work than any reuse and needs no invariant. Any later work that wants to treat
+   an evaluator result as stable across a decision must prove that separately — and should first
+   check whether the result is read at all.
 2. **A per-controller evaluation worker is not viable** (§3.6). Every simulated game copy builds its
    own players and controllers, and the AI in a copy takes priority while an outer decision is still
    on the stack. One worker per controller deadlocks the nested decision; one per copy parks a thread
    per copy. This also means "one AI decision at a time" is not a safe assumption for §7 concurrency
    work.
-3. **Recursive simulation has a pre-existing game-copy inaccuracy.** A fixture with creatures in play
-   before combat fails `GameSimulator`'s own copy-score check on the unmodified source: the copy comes
-   back with a creature missing on each side and the opponent two life adrift. This is not something
-   phase 1 introduced or fixed, but it bounds what a `GameCopier` redesign (§10.9) can be validated
-   against, and it deserves its own investigation.
+3. **Game copies are not fully detached from their original.** Two independent symptoms: a
+   recursively simulated game copies back with a creature missing on each side and the opponent two
+   life adrift, failing `GameSimulator`'s own copy-score check on unmodified source; and simulating a
+   combat inside a copy draws timestamps from the *original* game's counter (measured: +5 per
+   evaluation with lookahead, +0 for a bare copy). Neither was introduced or fixed by phase 1. Both
+   bound what a `GameCopier` redesign (§10.9) can be validated against, and the second means the
+   number of copies a build makes is observable in the original game's state.
+4. **A parity run must have assertions disabled.** Shadow checks recompute exactly what a
+   work-elimination change avoids computing, so an assertions-on comparison cannot see such a change
+   — it made the first baseline-reuse attempt look clean. §11.5's exact-trace criterion needs
+   `-DenableAssertions=false` on both builds to mean anything. `GameStateDigest` also had to record
+   timestamp *rank* rather than raw value, or finding 3 makes every future work-elimination change
+   fail state comparison for a reason unrelated to the game.
 
 ## 1. AI architecture overview
 
@@ -279,12 +290,13 @@ These are the best first implementation candidates because they eliminate demons
 
 1. **Pass a verified reusable baseline `Score` into `GameSimulator`.** `SpellAbilityPicker` calculates `origGameScore`, but each `GameSimulator` constructor recalculates it. `Score` is observed to contain only two final integers. Candidate/choice setup does mutate `SpellAbility` metadata, however, so first add a shadow assertion that a freshly evaluated baseline remains equal before every branch. If the corpus proves that invariant, pass the immutable value in a simulation context and retain sampled debug validation. If it fails, scope reuse only between branches with the same evaluator-relevant setup or abandon it. The successful case removes evaluation and possible combat-lookahead copies per branch without changing its value.
 
-   > **Implemented, narrowed.** The shadow assertion was written first and it *failed*: the baseline
-   > taken at the top of `chooseSpellAbilityToPlay` does not survive candidate generation, so the
-   > `SimulationRoot`/whole-decision form of this is unsound. Reuse is instead scoped to the branches
-   > of one candidate — the first branch evaluates exactly where it always did, the rest take that
-   > value — via a fifth `GameSimulator` constructor parameter. The assertion ships and runs in every
-   > assertion-enabled build.
+   > **Implemented differently, and the premise here is false.** The shadow assertion was written
+   > first and it *failed*: the baseline taken at the top of `chooseSpellAbilityToPlay` does not
+   > survive candidate generation, so the `SimulationRoot`/whole-decision form is unsound. Narrowing
+   > it to one candidate's branches passed, but reading the callers showed the value is never read on
+   > the shipped path — the picker builds a simulator per branch and never asks for the score, and
+   > neither does `simulateSpellAbility`. It is now derived on demand instead, which removes the
+   > first branch's evaluation too and needs no invariant at all. See §10.1.
 
 2. **Add thresholded target counting.** Most AI callers only need `candidateCount >= minTargets` or “any candidate”. Add a new method rather than changing `getNumCandidates` semantics:
 
@@ -317,13 +329,16 @@ These are the best first implementation candidates because they eliminate demons
 
 5. **Reuse one structurally adjusted `Cost` within a single feasibility call.** `ComputerUtilCost.canPayCost` reaches both mana and additional-cost checks, which each invoke structural `CostAdjustment.adjust`. Add internal overloads accepting a previously adjusted `Cost`; still run the separate `ManaCostBeingPaid` adjustment. This must be guarded by tests because adjustment temporarily manipulates face-down state and other parameters. Scope reuse to one call stack; do not cache adjusted costs across mutations.
 
-   > **Implemented, guarded.** The mana check reports the adjustment it derived and
+   > **Implemented, structurally guarded.** The mana check reports the adjustment it derived and
    > `CostPayment.canPayAdjustedAdditionalCosts` takes it. The two adjustments are **not**
-   > unconditionally equal, which the plan anticipated: while it works out the mana cost,
+   > unconditionally equal, as anticipated here: while it works out the mana cost,
    > `calculateManaCost` temporarily points the host's `castFrom` at its current zone, and the
-   > adjustment reads that for commander tax and for a static's `AffectedZone` requirement. Reuse is
-   > declined where the adjustment can see that difference (a commander, a card that has been cast)
-   > and where the ability announces `NumTimes`. Every reuse is shadow-checked under assertions.
+   > adjustment reads that. Reuse is allowed only when that temporary value equals the one the
+   > additional-cost check will see, which makes the two calls the same call — rather than
+   > enumerating the places the adjustment reads `castFrom`, which is a claim about code elsewhere
+   > that a third reader would silently invalidate. Measured cost of the stricter test on a mixed
+   > board: 59% of feasibility checks reuse instead of 100%, the difference being spells cast from
+   > hand. Every reuse is shadow-checked under assertions.
 
 6. **Replace decision-thread construction with a reusable single-thread executor.** This removes one OS-thread creation per priority decision while retaining the watchdog boundary. Use a named daemon `ThreadPoolExecutor(1,1)` owned by the AI/game lifecycle, a bounded queue, and cancellation. Remove `Thread.stop()` only after all evaluation loops honor interruption/cancellation; otherwise timeouts can leave mutation in progress. This is primarily a robustness/allocation improvement and is likely lower impact than the work-elimination items.
 
@@ -331,8 +346,10 @@ These are the best first implementation candidates because they eliminate demons
    > controller deadlocks a nested decision, and one owned by each controller parks a thread per game
    > copy — every copy builds its own controllers, and the AI in a copy takes priority while an outer
    > decision is still on the stack. `AiEvaluationExecutor` therefore pools workers process-wide,
-   > sized by actual concurrency. `Thread.stop()` was **not** removed, for the reason given here: the
-   > evaluation loop honours cancellation only between abilities.
+   > sized by actual concurrency and capped at eight, past which a decision starts a thread of its own
+   > rather than queueing — so the worst case is exactly the behaviour being replaced.
+   > `Thread.stop()` was **not** removed, for the reason given here: the evaluation loop honours
+   > cancellation only between abilities.
 
 7. **Fix the existing forced-attacker futures before adding concurrency.** The low-risk correctness choice is to run that small loop serially. A behavior-preserving parallel rewrite is possible only after extracting a pure computation over an immutable snapshot and applying results serially in original attacker order. Current timed-out tasks can outlive the method and mutate shared combat; that should not remain as an assumed-safe foundation.
 
@@ -657,33 +674,38 @@ GameSimulator(SimulationController controller, SimulationRoot root) {
 
 Keep a compatibility constructor for tests/callers that do not already own a baseline. Compute the reusable value at the same serial point from which branch constructors currently observe the original game, and do not reuse it after evaluator-relevant mutation. The `Score` value itself is thread-safe because its two fields are final integers; that says nothing about the evaluator. Correctness test: constructor-supplied score must equal freshly evaluated score before every branch in a debug corpus, including pre-combat states that trigger lookahead and abilities whose setup changes targets, modes, X, or activating player.
 
-> **Implemented (phase 1), and the condition did not hold.** The shadow test above was built first
-> and it failed on a full board with recursive simulation: the score evaluated at the top of
+> **Implemented differently (phase 1); the condition did not hold.** The shadow test above was built
+> first and it failed on a full board with recursive simulation: the score evaluated at the top of
 > `chooseSpellAbilityToPlay` no longer equalled a fresh evaluation by the time the branches ran,
 > because deciding whether each candidate can be played and paid for touches state the evaluator
-> reads. `SimulationRoot` was therefore not introduced. What shipped is narrower:
+> reads. Narrowing the reuse to the branches of a single candidate passed the suite — but only
+> because the suite runs with assertions on, which forces the value to be computed anyway.
+>
+> Reading the consumers settled it: `GameSimulator.origScore` is **never read** on the shipped path.
+> The picker constructs one simulator per target/mode branch and never asks for the score;
+> `simulateSpellAbility` does not use it either. Its only readers are `OnePlaySafetyChecker`, a few
+> tests, and the assertion-only copy-score check, each immediately after construction. So neither
+> `SimulationRoot` nor a reused value was introduced. What shipped is:
 >
 > ```java
-> // GameSimulator, fifth parameter; the four-argument constructor still evaluates for itself
-> GameSimulator(SimulationController controller, Game origGame, Player origAiPlayer,
->         PhaseType advanceToPhase, Score knownOrigScore)
->
-> // SpellAbilityPicker.evaluateSa: the first branch of a candidate evaluates the baseline,
-> // the rest take it
-> Score branchBaseline = null;
-> do {
->     GameSimulator simulator = new GameSimulator(controller, game, player, phase, branchBaseline);
->     if (!GameSimulator.COPY_STACK) {
->         branchBaseline = simulator.getScoreForOrigGame();
+> // GameSimulator: derived on demand, memoised, and almost never asked for
+> public Score getScoreForOrigGame() {
+>     if (origScore == null) {
+>         origScore = eval.getScoreForGameState(copier.getOriginalGame(), origAiPlayer);
 >     }
->     ...
-> } while (choicesIterator.advance(lastScore));
+>     return origScore;
+> }
 > ```
 >
-> The `COPY_STACK` guard matters: with a copied stack the simulator's baseline is the
-> post-resolution score, not the score of the game as it stands, so it must not be handed on. The
-> shadow check is kept as an `assert` inside the constructor, so it runs over the whole test suite
-> and costs nothing in a shipped build.
+> The `COPY_STACK` branch stays eager: it needs a second copy from the same copier, and taking it
+> later would reset the object mapping `simulateSpellAbility` relies on. The assertion-only copy check
+> forces the value at exactly the point the constructor used to compute it, so assertion builds are
+> unchanged.
+>
+> This is strictly better than the reuse on both axes. It removes the first branch's evaluation as
+> well as the rest, and a value that is never observed cannot change a decision, so it needs no
+> invariant and no shadow check. The general lesson for later phases: before proving that a cached
+> result stays valid, check whether the result is read at all.
 
 ### 10.2 Add bounded target predicates
 
@@ -970,16 +992,17 @@ The gates matter: do not start Phase 3 because a machine has many cores, and do 
 | P0 Pin fixtures/seeds/JVM; decision metrics, JFR events, traces, dashboards | **Done** (phase 0): `PerfProbe`, `PerfReport`, `DecisionTraceWriter`, `GameStateDigest`, `JfrPerfSink`, `forge bench` |
 | P0 Reproduce PR #11366 and #11160 evidence on current source | **Not done.** A timing run needs a machine that is not sharing CPU, which §11.2 is explicit about; the container this work was done in is not one. The cache needed to reproduce #11366 now exists; the runbook is in the phase 1 and phase 2 docs |
 | P0 Remove or make pure the forced-attacker futures; timeout regression test | **Done.** Serial in attacker order; covered by a repeat-declaration determinism test |
-| P1 Pass root `Score` into `GameSimulator` | **Done, narrowed to one candidate's branches.** The whole-decision form failed its shadow test — see §10.1 |
+| P1 Pass root `Score` into `GameSimulator` | **Done as on-demand derivation instead.** The whole-decision form failed its shadow test, and the value turned out to be unread on the shipped path — see §10.1 |
 | P1 Add `hasAtLeastCandidates` and migrate threshold-only callers | **Done.** Four callers migrated |
 | P1 Per-sort decision facts with exact ordered-output test | **Done.** `SortFacts`, shared across both ordering passes |
-| P2 Reuse one structural adjusted cost within `canPayCost` | **Done, guarded.** Declined where the two adjustments can see a different `castFrom`, or on `NumTimes` |
-| P2 Replace per-decision OS thread with lifecycle executor | **Done, as a shared pool.** Per-controller ownership is not viable — see §3.6 |
+| P2 Reuse one structural adjusted cost within `canPayCost` | **Done, structurally guarded.** Allowed only where the two adjustments run in the same `castFrom` context; 59% of feasibility checks on a mixed board |
+| P2 Replace per-decision OS thread with lifecycle executor | **Done, as a shared capped pool.** Per-controller ownership is not viable — see §3.6 |
 | (§3.4) No-allocation traversal where the result is not retained | **Deferred to phase 2.** No phase 1 row here, and §4.1 gates it on an allocation profile |
 
 Parity for every shipped item was checked as exact trace identity against the merge base, on a
-conventional full-board turn and a full-simulation multi-branch turn: ordered decision traces and
-the final canonical state digests were byte-identical.
+conventional full-board turn (881 lines) and a full-simulation multi-branch turn (23,046 lines):
+ordered decision traces plus the full canonical state dump, byte-identical. Both runs had assertions
+**disabled**; see finding 4 above for why that is not optional.
 
 ### Phase 2 outcomes so far
 

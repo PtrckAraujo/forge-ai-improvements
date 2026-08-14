@@ -1947,9 +1947,8 @@ public class Card extends GameEntity implements Comparable<Card>, IHasSVars, ITr
 
     @Override
     public final void setCounters(final Multiset<CounterType> allCounters) {
-        invalidateTraitCaches();
         boolean changed = counters.contains(CounterEnumType.MANABOND) || counters.elementSet().stream().allMatch(CounterType::isKeywordCounter);
-        counters = allCounters;
+        replaceCounters(allCounters);
         view.updateCounters(this);
 
         if (!isLKI()) {
@@ -1962,12 +1961,12 @@ public class Card extends GameEntity implements Comparable<Card>, IHasSVars, ITr
         if (changed) {
             updateKeywords();
         }
+        invalidateTraitCaches();
     }
 
     @Override
     public final void clearCounters() {
         if (counters.isEmpty()) { return; }
-        invalidateTraitCaches();
         boolean changed = counters.contains(CounterEnumType.MANABOND) || counters.elementSet().stream().allMatch(CounterType::isKeywordCounter);
 
         counters.clear();
@@ -1976,6 +1975,7 @@ public class Card extends GameEntity implements Comparable<Card>, IHasSVars, ITr
         if (changed) {
             updateKeywords();
         }
+        invalidateTraitCaches();
     }
 
     public final void putEtbCounters(Map<Optional<Player>, Multiset<CounterType>> etbCounters) {
@@ -4210,8 +4210,8 @@ public class Card extends GameEntity implements Comparable<Card>, IHasSVars, ITr
     public final void updateTypeCache() {
         // updateTypes() refreshes only the current state. Clone/rollback paths can change the type
         // inputs of other states too, so none of this card's trait views may survive this update.
-        invalidateTraitCaches();
         this.getCurrentState().updateTypes();
+        invalidateTraitCaches();
     }
 
     public boolean hasChangedCardColors() {
@@ -5269,8 +5269,6 @@ public class Card extends GameEntity implements Comparable<Card>, IHasSVars, ITr
     }
 
     public final void updateKeywordsCache(final CardState state) {
-        // Keywords can contribute all three cached trait kinds.
-        state.invalidateTraitCache();
         KeywordCollection keywords = new KeywordCollection();
 
         // Layer 1
@@ -5292,6 +5290,9 @@ public class Card extends GameEntity implements Comparable<Card>, IHasSVars, ITr
         }
 
         state.setCachedKeywords(keywords);
+        // Keywords can contribute all three cached trait kinds. Invalidate after publishing the
+        // new keyword collection so a concurrent rebuild cannot publish the preceding version.
+        state.invalidateTraitCache();
     }
     private void visitUnhiddenKeywords(CardState state, Visitor<KeywordInterface> visitor) {
         for (KeywordInterface kw : getUnhiddenKeywords(state)) {

@@ -26,6 +26,7 @@ import org.testng.annotations.Test;
 
 import forge.ai.simulation.GameStateEvaluator.Score;
 import forge.game.Game;
+import forge.game.GameStateDigest;
 import forge.game.card.Card;
 import forge.game.phase.PhaseType;
 import forge.game.player.Player;
@@ -35,20 +36,18 @@ import forge.util.perf.PerfCounter;
 import forge.util.perf.PerfProbe;
 
 /**
- * Every simulation branch of one candidate scores the same unchanged original game as its baseline,
- * and that evaluation copies the whole game again when there is a combat to look ahead to. The first
- * branch still evaluates it; the rest take that value.
+ * {@code GameSimulator} used to score the unchanged original game in its constructor. The full
+ * simulation picker builds one simulator per target/mode branch and never asks for that score, and
+ * neither does {@code simulateSpellAbility} — so on a shipped build the work was thrown away. It is
+ * now derived on demand.
  *
- * <p>The reuse is deliberately scoped to the branches of a single candidate. A baseline taken before
- * candidate generation does <em>not</em> survive to the branches — working out whether a candidate
- * can be played and paid for touches state the evaluator reads — and the shadow check inside
- * {@code GameSimulator} catches exactly that. Because that check runs whenever assertions are on,
- * which is how Surefire runs, the whole simulation suite is a corpus for the narrower invariant this
- * relies on. These tests pin what would otherwise only be covered incidentally: that a supplied
- * baseline is the same value the simulator would have derived, that scores do not move, and that the
- * reuse actually engages.</p>
+ * <p>A value that is never observed cannot change a decision, which is what makes this preferable to
+ * the alternative the plan proposed, carrying one evaluation across branches: that needs the
+ * evaluator's result to hold still, and it demonstrably does not. What these tests pin is that the
+ * value is still correct and still available when something does ask for it, and that the branches
+ * really have stopped asking.</p>
  */
-public class BaselineScoreReuseTest extends SimulationTest {
+public class LazyBaselineScoreTest extends SimulationTest {
     @AfterMethod
     public void restoreProbeState() {
         PerfProbe.reset();
@@ -77,31 +76,33 @@ public class BaselineScoreReuseTest extends SimulationTest {
         return game;
     }
 
-    /** A simulator handed a baseline must behave as one that evaluated the baseline itself. */
+    /** Asking for the score late must give the same number, and must not disturb the game. */
     @Test(timeOut = 300000)
-    public void suppliedBaselineMatchesTheEvaluatedOne() {
+    public void theLazyScoreIsTheSameScore() {
         final Game game = combatLookaheadGame();
         final Player ai = game.getPlayers().get(1);
 
         final Score evaluated = new GameStateEvaluator().getScoreForGameState(game, ai);
+        final String before = GameStateDigest.digest(game);
 
         final SimulationController controller = new SimulationController(evaluated, 0);
-        final GameSimulator selfEvaluating = new GameSimulator(controller, game, ai, null);
-        final GameSimulator supplied = new GameSimulator(controller, game, ai, null, evaluated);
+        final GameSimulator simulator = new GameSimulator(controller, game, ai, null);
 
-        Assert.assertTrue(supplied.getScoreForOrigGame().equals(selfEvaluating.getScoreForOrigGame()),
-                "the supplied baseline differs from the one the simulator would have evaluated");
-        Assert.assertTrue(supplied.getScoreForOrigGame().equals(evaluated));
+        Assert.assertTrue(simulator.getScoreForOrigGame().equals(evaluated),
+                "the deferred baseline differs from the one evaluated up front");
+        // and it is memoised, not re-derived on every call
+        Assert.assertSame(simulator.getScoreForOrigGame(), simulator.getScoreForOrigGame());
+        Assert.assertEquals(GameStateDigest.digest(game), before,
+                "deriving the baseline changed the original game");
     }
 
     /**
-     * Candidate scores do not move, and the reuse really is engaging — a fast path that quietly fell
-     * back to re-evaluating every branch would pass the first half of this alone. Several candidates
-     * are evaluated because only ones with more than one branch can reuse anything: the first branch
-     * of every candidate still evaluates its own baseline.
+     * Candidate scores are unchanged, and the branches no longer evaluate a baseline at all: the
+     * evaluations left are the ones that scored a simulated result, plus the copy check that only
+     * an assertion-enabled build performs.
      */
     @Test(timeOut = 300000)
-    public void candidateScoresAreUnchangedAndTheBaselineIsReused() {
+    public void candidateScoresAreUnchangedWithoutPerBranchBaselines() {
         final Game game = combatLookaheadGame();
         final Player ai = game.getPlayers().get(1);
 
@@ -116,11 +117,13 @@ public class BaselineScoreReuseTest extends SimulationTest {
         PerfProbe.setEnabled(true);
         final List<String> first = new ArrayList<>();
         final List<String> second = new ArrayList<>();
+        final long branches;
         try {
             for (int i = 0; i < candidates.size(); i++) {
                 first.add(String.valueOf(
                         picker.evaluateSa(new SimulationController(baseline, 0), phase, candidates, i)));
             }
+            branches = PerfProbe.getGlobal().get(PerfCounter.SIMULATION_BRANCHES);
             for (int i = 0; i < candidates.size(); i++) {
                 second.add(String.valueOf(
                         picker.evaluateSa(new SimulationController(baseline, 0), phase, candidates, i)));
@@ -130,7 +133,6 @@ public class BaselineScoreReuseTest extends SimulationTest {
         }
 
         Assert.assertEquals(second, first, "evaluating the same candidates twice gave different scores");
-        Assert.assertTrue(PerfProbe.getGlobal().get(PerfCounter.BASELINE_SCORE_REUSES) > 0L,
-                "no branch actually reused the baseline, so this proved nothing");
+        Assert.assertTrue(branches > 0, "the fixture must simulate some branches");
     }
 }

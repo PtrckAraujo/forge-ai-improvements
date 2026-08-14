@@ -927,10 +927,12 @@ public class AiAttackController {
                             }
                         }
                     }
-                } catch (RuntimeException ex) {
+                } catch (RuntimeException | StackOverflowError ex) {
                     // the fan-out this replaced completed a failing task exceptionally and carried
                     // on with the remaining attackers; keep that rather than failing the whole
-                    // declaration on one bad creature
+                    // declaration on one bad creature. StackOverflowError is included because the
+                    // old handler caught it too and deep recursion is a real failure mode here
+                    // (see #8302); errors that say the JVM is out of resources are not.
                     ex.printStackTrace();
                     continue;
                 }

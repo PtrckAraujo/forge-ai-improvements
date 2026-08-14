@@ -656,11 +656,18 @@ public class ComputerUtilCost {
      *
      * <p>The two are not automatically the same. While it works out the mana cost,
      * {@code ComputerUtilMana.calculateManaCost} temporarily points the host card's "cast from" at
-     * the zone it is currently in, and the adjustment reads that: commander tax is charged from it,
-     * and a static ability's {@code AffectedZone} requirement is tested against it for a card that
-     * has been cast. The additional-cost check runs after that temporary value has been restored,
-     * so where the adjustment can see it, the two contexts genuinely differ and the second
-     * adjustment has to be performed for itself.</p>
+     * the zone it is currently in, and the adjustment reads that — commander tax is charged from it,
+     * and a static ability's {@code AffectedZone} requirement is tested against it. The
+     * additional-cost check runs after that temporary value has been restored.</p>
+     *
+     * <p>So the question is answered structurally: reuse only when that temporary value was the same
+     * value the additional-cost check will see, which makes the two calls the same call. An earlier
+     * version of this instead enumerated the places the adjustment reads "cast from" and allowed
+     * reuse where none of them applied. That is a claim about code elsewhere, and it silently stops
+     * being true the day someone adds a third reader — whereas "the context did not differ" cannot
+     * stop being true. The cost of the stricter test is that a spell being cast from hand, whose
+     * "cast from" is genuinely repointed, no longer reuses; activated abilities, and spells already
+     * on the stack, still do.</p>
      */
     private static boolean canReuseAdjustedCost(final SpellAbility sa, final boolean effect, final Cost cost, final Cost adjusted) {
         if (adjusted == null) {
@@ -678,11 +685,9 @@ public class ComputerUtilCost {
         if (host == null) {
             return false;
         }
-        if (sa.isSpell() && !host.isInZone(ZoneType.Stack) && !Objects.equals(host.getCastFrom(), host.getZone())) {
-            // the mana check adjusted under a different "cast from" than this one would
-            return !host.isCommander() && !host.wasCast();
-        }
-        return true;
+        // the temporary repointing calculateManaCost performs, and whether it changed anything
+        return !sa.isSpell() || host.isInZone(ZoneType.Stack)
+                || Objects.equals(host.getCastFrom(), host.getZone());
     }
 
     /** The shadow check behind {@link #canReuseAdjustedCost}. Only ever called from an {@code assert}. */
