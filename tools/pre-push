@@ -1,0 +1,31 @@
+#!/bin/sh
+# Two guards, for the two different ways work can end up in the upstream project.
+#
+# $1 = remote name, $2 = remote URL
+ALLOWED="PtrckAraujo/forge-ai-improvements"
+URL="$2"
+
+# 1. Pushing there. Hard failure: this must never happen.
+case "$URL" in
+    *"$ALLOWED"*)
+        ;;
+    *)
+        echo "" >&2
+        echo "pre-push REFUSED: $URL" >&2
+        echo "" >&2
+        echo "  Only $ALLOWED accepts pushes from this" >&2
+        echo "  working copy. The upstream project (Card-Forge/forge) is off limits." >&2
+        echo "" >&2
+        exit 1
+        ;;
+esac
+
+# 2. A pull request opened there. Warning, not a failure: the condition has nothing to do with
+#    this push, and blocking would strand unrelated work. It is loud because it is easy to miss
+#    for days otherwise - upstream maintainers noticed #11612 before we did.
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -n "$ROOT" ] && [ -x "$ROOT/tools/check-upstream-prs.sh" ]; then
+    "$ROOT/tools/check-upstream-prs.sh" || true
+fi
+
+exit 0

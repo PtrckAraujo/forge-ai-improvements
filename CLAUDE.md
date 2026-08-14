@@ -27,13 +27,29 @@ That applies to every route, not only `git push`:
   must be `PtrckAraujo:master`. If it says `Card-Forge:master`, the pull request is in the wrong
   repository and closing it is the fix — the branch itself is fine and stays where it is.
 
-Two mechanisms enforce this, and neither replaces reading the above:
+Three mechanisms, covering the two different failure routes. None replaces reading the above:
 
-1. `.git/hooks/pre-push` fails any push whose remote URL is not this repository. It lives in
-   `.git/`, so it is local to a working copy and does not travel with a clone — reinstall it in a
-   fresh checkout.
-2. The session's git proxy refuses to supply credentials for repositories outside the authorised
+1. `.git/hooks/pre-push` **fails** any push whose remote URL is not this repository, and then runs
+   the pull request check below as a warning. It lives in `.git/`, so it is local to a working copy
+   and does not travel with a clone — reinstall it in a fresh checkout:
+
+   ```
+   cp tools/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+   ```
+
+2. `tools/check-upstream-prs.sh` reports any open pull request of ours against the upstream project
+   and exits non-zero. Run it any time; it is also run by the hook on every push. It needs to reach
+   `api.github.com/repos/Card-Forge/forge`, which a sandboxed session cannot — it says so and skips
+   rather than reporting a clean result it did not establish. From a Claude session, use `WebFetch`
+   on `https://github.com/Card-Forge/forge/pulls?q=is%3Apr+author%3APtrckAraujo` instead, which does
+   work.
+
+3. The session's git proxy refuses to supply credentials for repositories outside the authorised
    set, so a push to `Card-Forge/forge` gets a 403 before the hook is even consulted.
+
+None of these can stop a pull request being *created* upstream — that happens in a browser or in the
+Claude Code UI, where the only defence is the base line on the form. They shorten the time from
+mistake to discovery from "whenever a maintainer notices" to "the next push".
 
 ## Branches and pull requests
 
