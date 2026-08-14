@@ -13,8 +13,6 @@ import forge.game.player.Player;
 import forge.game.spellability.SpellAbility;
 import forge.game.spellability.TargetChoices;
 import forge.util.collect.FCollectionView;
-import forge.util.perf.PerfCounter;
-import forge.util.perf.PerfProbe;
 
 import java.util.*;
 
@@ -26,6 +24,7 @@ public class GameSimulator {
     private Player aiPlayer;
     private GameStateEvaluator eval;
     private List<String> origLines;
+    private final Player origAiPlayer;
     private Score origScore;
     private SpellAbilityChoicesIterator interceptor;
 
@@ -44,24 +43,8 @@ public class GameSimulator {
     }
 
     public GameSimulator(SimulationController controller, Game origGame, Player origAiPlayer, PhaseType advanceToPhase) {
-        this(controller, origGame, origAiPlayer, advanceToPhase, null);
-    }
-
-    /**
-     * @param knownOrigScore the caller's already-evaluated score for {@code origGame} from
-     *     {@code origAiPlayer}'s perspective, or {@code null} to evaluate it here.
-     *
-     *     <p>Every branch of one candidate re-derives the same unchanged baseline, and that
-     *     evaluation is not cheap: before combat damage it copies the whole game again to look
-     *     ahead. {@link GameStateEvaluator.Score} is two final ints, so passing the value the picker
-     *     already holds is the same number reached by less work. It is only sound while the original
-     *     game has not changed in a way the evaluator can see, so with assertions on — which is how
-     *     the test suite runs — the supplied value is checked against a fresh evaluation for every
-     *     branch, and a stale baseline fails loudly rather than quietly changing a decision.</p>
-     */
-    public GameSimulator(SimulationController controller, Game origGame, Player origAiPlayer, PhaseType advanceToPhase,
-            Score knownOrigScore) {
         this.controller = controller;
+        this.origAiPlayer = origAiPlayer;
         copier = new GameCopier(origGame);
         simGame = copier.makeCopy(advanceToPhase, origAiPlayer);
 
@@ -72,16 +55,11 @@ public class GameSimulator {
         debugLines = origLines;
 
         debugPrint = false;
-        if (knownOrigScore != null) {
-            PerfProbe.count(PerfCounter.BASELINE_SCORE_REUSES);
-            origScore = knownOrigScore;
-            assert baselineStillHolds(origGame, origAiPlayer, knownOrigScore)
-                    : "reused simulation baseline no longer matches a fresh evaluation";
-        } else {
-            origScore = eval.getScoreForGameState(origGame, origAiPlayer);
-        }
-
+        // The score of the unchanged original game is not derived here any more; see
+        // getScoreForOrigGame(). The copy check below is its only reader in this constructor, and it
+        // forces the value at exactly the point it used to be computed.
         if (advanceToPhase == null && CHECK_GAME_COPY_SCORE) {
+            getScoreForOrigGame();
             ensureGameCopyScoreMatches(origGame, origAiPlayer);
         }
 
@@ -94,16 +72,13 @@ public class GameSimulator {
             Game copyOrigGame = copier.makeCopy();
             Player copyOrigAiPlayer = copyOrigGame.getPlayers().get(1);
             resolveStack(copyOrigGame, copyOrigGame.getPlayers().get(0));
+            // stays eager: it needs a second copy from this copier, and doing that later would
+            // reset the object mapping that simulateSpellAbility relies on
             origScore = eval.getScoreForGameState(copyOrigGame, copyOrigAiPlayer);
         }
 
         debugPrint = false;
         debugLines = null;
-    }
-
-    /** The shadow check behind the reused baseline. Only ever called from an {@code assert}. */
-    private boolean baselineStillHolds(Game origGame, Player origAiPlayer, Score supplied) {
-        return supplied.equals(eval.getScoreForGameState(origGame, origAiPlayer));
     }
 
     private void ensureGameCopyScoreMatches(Game origGame, Player origAiPlayer) {
@@ -328,7 +303,24 @@ public class GameSimulator {
         return simGame;
     }
 
+    /**
+     * The score of the unchanged original game, from the AI player's perspective.
+     *
+     * <p>Derived on demand rather than in the constructor. Almost nothing asks for it: the full
+     * simulation picker builds one of these per target/mode branch and never reads the value, and
+     * neither does {@link #simulateSpellAbility}. Only {@code OnePlaySafetyChecker}, a handful of
+     * tests, and the assertion-only game copy check do — each of them immediately after construction,
+     * so they see the same value at the same point they always did.</p>
+     *
+     * <p>The evaluation is not cheap: before combat damage it copies the whole game again to look
+     * ahead at the coming combat. Not computing a number that nobody reads cannot change a decision,
+     * which is what makes this preferable to carrying one branch's value over to the next — the game
+     * demonstrably does not hold the evaluator's result still for that long.</p>
+     */
     public Score getScoreForOrigGame() {
+        if (origScore == null) {
+            origScore = eval.getScoreForGameState(copier.getOriginalGame(), origAiPlayer);
+        }
         return origScore;
     }
 

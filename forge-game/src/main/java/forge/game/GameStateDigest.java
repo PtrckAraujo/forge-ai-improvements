@@ -20,6 +20,10 @@ package forge.game;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
 import forge.game.card.Card;
 import forge.game.combat.Combat;
@@ -40,9 +44,9 @@ import forge.game.zone.ZoneType;
  * <h2>What is included</h2>
  * <p>Turn, phase, active and priority player; each player's life and counters; every zone's contents
  * <em>in zone order</em> — including hidden zones, because library order changes later decisions;
- * per-card identity, name, owner, controller, tapped/sick/face-down/phased-out status, timestamp and
- * counters; the stack from top to bottom; and the current combat's attackers, defenders and ordered
- * blockers.</p>
+ * per-card identity, name, owner, controller, tapped/sick/face-down/phased-out status, timestamp
+ * <em>rank</em> and counters; the stack from top to bottom; and the current combat's attackers,
+ * defenders and ordered blockers.</p>
  *
  * <h2>What is deliberately not included</h2>
  * <p>Derived characteristics such as computed power/toughness, keyword sets and applied continuous
@@ -84,6 +88,7 @@ public final class GameStateDigest {
         if (game == null) {
             return "game null\n";
         }
+        final Map<Long, Integer> timestampRanks = rankTimestamps(game);
 
         final PhaseHandler phase = game.getPhaseHandler();
         sb.append("game turn=").append(phase == null ? -1 : phase.getTurn());
@@ -94,7 +99,7 @@ public final class GameStateDigest {
         sb.append('\n');
 
         for (final Player player : game.getPlayers()) {
-            appendPlayer(sb, player);
+            appendPlayer(sb, player, timestampRanks);
         }
 
         appendStack(sb, game);
@@ -102,7 +107,29 @@ public final class GameStateDigest {
         return sb.toString();
     }
 
-    private static void appendPlayer(final StringBuilder sb, final Player player) {
+    /**
+     * Dense rank of every card timestamp in the game, smallest first.
+     *
+     * <p>Timestamps are a monotonic per-game counter, and the rules only ever use them for relative
+     * order: which continuous effect applies over which. Their absolute values additionally depend on
+     * how much hypothetical work the AI happened to do — simulating a combat inside a copied game
+     * draws from the original game's counter, so two builds that make a different number of copies
+     * assign different numbers to the same card in the same state. Recording the rank keeps every
+     * reordering visible, which is the part that could change a game, and drops the part that only
+     * reflects how the answer was reached.</p>
+     */
+    private static Map<Long, Integer> rankTimestamps(final Game game) {
+        final SortedSet<Long> distinct = new TreeSet<>();
+        game.forEachCardInGame(card -> distinct.add(card.getGameTimestamp()));
+        final Map<Long, Integer> ranks = new HashMap<>(distinct.size() * 2);
+        int rank = 0;
+        for (final Long ts : distinct) {
+            ranks.put(ts, rank++);
+        }
+        return ranks;
+    }
+
+    private static void appendPlayer(final StringBuilder sb, final Player player, final Map<Long, Integer> timestampRanks) {
         sb.append("player ").append(GameTraceDescriptors.describe(player));
         sb.append(" life=").append(player.getLife());
         sb.append(" counters=").append(GameTraceDescriptors.describeCounters(player.getCounters()));
@@ -120,13 +147,13 @@ public final class GameStateDigest {
             int index = 0;
             for (final Card card : zone.getCards()) {
                 sb.append("  ").append(zoneType.name()).append(' ').append(index++).append(' ');
-                appendCard(sb, card);
+                appendCard(sb, card, timestampRanks);
                 sb.append('\n');
             }
         }
     }
 
-    private static void appendCard(final StringBuilder sb, final Card card) {
+    private static void appendCard(final StringBuilder sb, final Card card, final Map<Long, Integer> timestampRanks) {
         if (card == null) {
             sb.append('-');
             return;
@@ -138,7 +165,8 @@ public final class GameStateDigest {
         sb.append(" sick=").append(card.isSick());
         sb.append(" faceDown=").append(card.isFaceDown());
         sb.append(" phasedOut=").append(card.isPhasedOut());
-        sb.append(" ts=").append(card.getGameTimestamp());
+        final Integer rank = timestampRanks.get(card.getGameTimestamp());
+        sb.append(" ts#").append(rank == null ? "?" : rank);
         sb.append(" counters=").append(GameTraceDescriptors.describeCounters(card.getCounters()));
     }
 

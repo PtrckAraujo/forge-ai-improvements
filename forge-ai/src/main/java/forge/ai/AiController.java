@@ -106,6 +106,15 @@ public class AiController {
     private boolean useLivingEnd;
     private List<SpellAbility> skipped;
     private volatile boolean timeoutReached;
+    /** Whether the shadow checks in this class should run. Assertions are enabled under Surefire. */
+    private static final boolean ASSERTIONS_ENABLED = areAssertionsEnabled();
+
+    @SuppressWarnings("AssertWithSideEffects")
+    private static boolean areAssertionsEnabled() {
+        boolean enabled = false;
+        assert enabled = true;
+        return enabled;
+    }
 
     public AiController(final Player computerPlayer, final Game game0) {
         player = computerPlayer;
@@ -1672,6 +1681,9 @@ public class AiController {
     static void sortCandidates(final List<SpellAbility> all) { // package visible so a parity test can order the same list both ways
         final long sortToken = PerfProbe.start(PerfTimer.CANDIDATE_SORT);
         try {
+            // has to be the order the sort started from: these comparators are not guaranteed
+            // transitive, so re-sorting an already sorted list is not the same experiment
+            final List<SpellAbility> beforeSort = ASSERTIONS_ENABLED ? new ArrayList<>(all) : null;
             final ComputerUtilAbility.SortFacts facts = new ComputerUtilAbility.SortFacts();
             final ComputerUtilAbility.saComparator evaluator = new ComputerUtilAbility.saComparator(facts);
             try {
@@ -1682,9 +1694,32 @@ public class AiController {
                 String assertex = ComparatorUtil.verifyTransitivity(evaluator, all);
                 Sentry.captureMessage(ex.getMessage() + "\nAssertionError [verifyTransitivity]: " + assertex);
             }
+            // The ordered list is the artefact that has to match, so with assertions on - which is
+            // how the test suite runs - order a copy the way the uncached comparators would and
+            // require the same sequence. Every AI test then checks the facts, not just the one that
+            // was written for them.
+            assert beforeSort == null || orderMatchesUncached(beforeSort, all)
+                    : "per-decision comparator facts changed the candidate ordering";
         } finally {
             PerfProbe.stop(PerfTimer.CANDIDATE_SORT, sortToken);
         }
+    }
+
+    /** The shadow check behind {@link #sortCandidates}. Only ever called from an {@code assert}. */
+    private static boolean orderMatchesUncached(final List<SpellAbility> beforeSort, final List<SpellAbility> sorted) {
+        final List<SpellAbility> uncached = new ArrayList<>(beforeSort);
+        try {
+            uncached.sort(ComputerUtilAbility.saEvaluator);
+            ComputerUtilAbility.sortCreatureSpells(uncached);
+        } catch (IllegalArgumentException ex) {
+            return true; // the sort already reported this; an unstable comparator is not this check's finding
+        }
+        for (int i = 0; i < sorted.size(); i++) {
+            if (sorted.get(i) != uncached.get(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private SpellAbility chooseSpellAbilityToPlayFromList(final List<SpellAbility> all, boolean skipCounter) {
