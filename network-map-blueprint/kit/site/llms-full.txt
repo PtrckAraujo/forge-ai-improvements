@@ -1,0 +1,47 @@
+# Civic Network Map — Who collaborates with whom
+
+> Who collaborates with whom on Instagram: 381 accounts and 671 collaborations in 16 clusters. Categories: Politician 146, Content creator 65, New media 62, Other 40, Party 27, Journalist 24, Traditional media 17. Period 2026-01-01 – 2026-09-30.
+
+Site: https://example.org/
+Authors: Example Newsroom
+Source: Instagram. Edition: 2026-10-29.
+How to cite: «Civic Network Map, Example Newsroom, edition of 2026-10-29».
+
+## Method
+
+**Collection.** Every account is added by the editors with a declared category, which says what the account does, not which side it is on. A link is recorded only when an actual collaboration between two accounts is observed; nothing is inferred from affinity or membership. Accounts without collaborations stay on the map as isolated nodes.
+
+**Metrics.** Followers, interactions and follower growth refer to the declared period. Where a value could not be measured the map shows n/r, which is not zero.
+
+**Clusters.** Found by the Louvain algorithm on the collaboration graph only (resolution 1.8, seed 7). A cluster is not a coalition: it says who works with whom, not what anyone thinks. By default a cluster is named after its most connected member; editorial labels change the name, not the members.
+
+**Bridges.** Betweenness centrality: how many shortest paths between other accounts pass through an account. 'Detaches N' counts the accounts that would be cut off from the rest of the network if that account disappeared.
+
+**Positions.** A force-directed layout computed once per edition (forceatlas2). Distances have no geographic meaning.
+
+## Editorial corrections
+
+- cluster of orma.qui merged into the cluster of compass_atlas. Same movement; the two pages split in March.
+- figapa_dor moved to the cluster of ledgerharbor. Spokesperson of the party, collaborations are mostly elsewhere.
+
+## Groups and clusters
+
+- **Far left** (20 accounts): Red Forum (20)
+- **Left** (26 accounts): Left Alliance (26)
+- **Centre-left** (65 accounts): Progressive Party (25), Civic List (20), Green Wave (20)
+- **Centre** (33 accounts): Liberal Centre (22), Reform Bloc (11)
+- **Centre-right** (45 accounts): Popular Union (23), Moderates (22)
+- **Right** (80 accounts): Patriots / Heritage League (53), National Front (27)
+- **Far right** (16 accounts): Identity Network (16)
+- **Independent** (62 accounts): Indie Media (29), Podcast Circle (22), Satire Desk (11)
+- **Unassigned** (9 accounts): nevel_za (9)
+
+## Media Compass
+
+3,059 captions from 47 accounts. A post is heated at 2+ points (strong terms 2, others 1, each counted once). Tone: informative below 2%, militant from 10%. Profiles with fewer than 20 text posts are excluded. Keyword counting misreads irony and quotes: it compares profiles, it does not judge single posts.
+
+Topics: Politics & parties, Economy & work, Foreign affairs & war, Justice, Climate & environment, Health, Technology, Culture & sport, History & memory.
+
+## The data
+
+Per-profile data is consulted in the interactive map only. For corrections or removal requests use the contact in the site's information panel.

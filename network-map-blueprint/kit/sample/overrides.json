@@ -1,0 +1,17 @@
+{
+  "_comment": "Editorial corrections. Each one is disclosed in the methodology output.",
+  "merge": [
+    {
+      "into": "compass_atlas",
+      "from": "orma.qui",
+      "reason": "Same movement; the two pages split in March."
+    }
+  ],
+  "move": [
+    {
+      "id": "figapa_dor",
+      "to": "ledgerharbor",
+      "reason": "Spokesperson of the party, collaborations are mostly elsewhere."
+    }
+  ]
+}

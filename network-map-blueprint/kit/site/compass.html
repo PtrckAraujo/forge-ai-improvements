@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- SEO:head -->
+<title>Media Compass · Civic Network Map</title>
+<meta name="description" content="The tone of 3,059 posts from 47 accounts: how heated, how political, and against whom.">
+<link rel="canonical" href="https://example.org/compass">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Civic Network Map">
+<meta property="og:title" content="Media Compass · Civic Network Map">
+<meta property="og:description" content="The tone of 3,059 posts from 47 accounts: how heated, how political, and against whom.">
+<meta property="og:url" content="https://example.org/compass">
+<meta property="og:image" content="https://example.org/img/og-compass.png">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">{"@context": "https://schema.org", "@graph": [{"@type": "WebSite", "@id": "https://example.org/#site", "name": "Civic Network Map", "url": "https://example.org/", "inLanguage": "en"}, {"@type": "WebPage", "@id": "https://example.org/compass#page", "name": "Media Compass · Civic Network Map", "url": "https://example.org/compass", "isPartOf": {"@id": "https://example.org/#site"}, "dateModified": "2026-10-29", "description": "The tone of 3,059 posts from 47 accounts: how heated, how political, and against whom."}, {"@type": "Dataset", "@id": "https://example.org/#data", "name": "Civic Network Map", "description": "The tone of 3,059 posts from 47 accounts: how heated, how political, and against whom.", "dateModified": "2026-10-29", "temporalCoverage": "2026-01-01/2026-09-30", "creator": [{"@type": "Organization", "name": "Example Newsroom"}]}]}</script>
+<!-- /SEO:head -->
+<meta name="theme-color" content="#F1EFED">
+<link rel="icon" href="img/icon.svg" type="image/svg+xml">
+<script src="js/theme-init.js"></script>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="page-compass">
+
+<div class="gate" id="gate">
+  <div class="gate-box box">
+    <p class="lab">Loading</p>
+    <h1>Media Compass</h1>
+    <p class="gate-msg" id="gateMsg" role="status"></p>
+  </div>
+</div>
+
+<header class="bar">
+  <a class="brand" href="./"><b id="brandTitle"></b><span id="brandSub"></span></a>
+  <div class="tools box">
+    <a class="btn" href="./">← Network</a>
+    <button class="btn" id="btnTheme" type="button">Dark</button>
+  </div>
+</header>
+
+<main class="cp" id="cp" hidden>
+  <div class="cp-top">
+    <div>
+      <p class="lab" id="cpPeriod"></p>
+      <h1>Media Compass</h1>
+      <p>Where each profile sits, read in the text of its posts: <b>how heated</b> it gets and
+         <b>what it talks about</b>. <span id="cpLede"></span></p>
+    </div>
+    <dl class="counters box">
+      <div><dt class="lab">Profiles</dt><dd id="cN">—</dd></div>
+      <div><dt class="lab">Posts read</dt><dd id="cPosts">—</dd></div>
+      <div><dt class="lab">Heated</dt><dd class="hot" id="cAcc">—</dd></div>
+    </dl>
+  </div>
+
+  <div class="cp-main">
+    <section class="plot-box box" aria-labelledby="plotTitle">
+      <div class="plot-head">
+        <h2 class="lab" id="plotTitle">Map of profiles</h2>
+        <div class="seg" id="axis" role="group" aria-label="Vertical axis">
+          <span class="lab">Axis</span>
+          <button type="button" data-y="pol" aria-pressed="true">How political</button>
+          <button type="button" data-y="side">Against whom</button>
+          <button type="button" data-y="vague">Unnamed enemy</button>
+        </div>
+      </div>
+      <svg id="cpSvg" role="img" aria-labelledby="cpSvgDesc"><desc id="cpSvgDesc"></desc></svg>
+      <div class="timeline" id="timeline" role="group" aria-label="Month"></div>
+      <div class="plot-foot">
+        <div class="seg" id="colorBy" role="group" aria-label="Colour">
+          <span class="lab">Colour</span>
+          <button type="button" data-c="tone" aria-pressed="true">Tone</button>
+          <button type="button" data-c="cluster">Cluster</button>
+          <button type="button" data-c="cat">Category</button>
+        </div>
+        <span class="lab">Circle size = posts with text</span>
+      </div>
+    </section>
+
+    <aside class="side box" aria-label="Rankings and profile">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-o="acc" aria-selected="true">Most heated</button>
+        <button type="button" role="tab" data-o="pol" aria-selected="false">Most political</button>
+        <button type="button" role="tab" data-o="txt" aria-selected="false">Most posts</button>
+      </div>
+      <div class="side-body" id="side"></div>
+    </aside>
+  </div>
+
+  <div class="cp-lower">
+    <section class="box" aria-labelledby="tTitle">
+      <h2 class="lab" id="tTitle">On which topics tones rise</h2>
+      <div id="topics"></div>
+    </section>
+    <section class="box" aria-labelledby="gTitle">
+      <h2 class="lab" id="gTitle">Who heated posts name</h2>
+      <div id="targets"></div>
+    </section>
+  </div>
+
+  <section class="cp-list box" aria-labelledby="lTitle">
+    <h2 class="lab" id="lTitle">All profiles</h2>
+    <div class="filters">
+      <input id="fq" type="search" placeholder="Filter by name" aria-label="Filter by name" autocomplete="off">
+      <div class="seg" id="fTone" role="group" aria-label="Tone">
+        <button type="button" data-t="" aria-pressed="true">All</button>
+        <button type="button" data-t="informative" aria-pressed="false">Informative</button>
+        <button type="button" data-t="mixed" aria-pressed="false">Mixed</button>
+        <button type="button" data-t="militant" aria-pressed="false">Militant</button>
+      </div>
+      <span class="lab" id="fCount"></span>
+    </div>
+    <div class="grid-cards" id="list"></div>
+    <p class="empty" id="listEmpty" hidden>No profile matches these filters.</p>
+  </section>
+
+  <p class="lab" style="margin-top:18px">Keyword counting misreads irony and quotes: it compares profiles, it does not judge single posts.
+     <a href="llms-full.txt">Method</a></p>
+</main>
+
+<!-- SEO:text -->
+<section class="vh" aria-labelledby="seoTitle">
+<h2 id="seoTitle">Civic Network Map in words</h2>
+<p>Who collaborates with whom on Instagram: 381 accounts and 671 collaborations in 16 clusters. Categories: Politician 146, Content creator 65, New media 62, Other 40, Party 27, Journalist 24, Traditional media 17. Period 2026-01-01 – 2026-09-30. Edition of <time datetime="2026-10-29">2026-10-29</time>.</p>
+<h3>Groups and clusters</h3><ul>
+<li><b>Far left</b>: Red Forum (20).</li>
+<li><b>Left</b>: Left Alliance (26).</li>
+<li><b>Centre-left</b>: Progressive Party (25), Civic List (20), Green Wave (20).</li>
+<li><b>Centre</b>: Liberal Centre (22), Reform Bloc (11).</li>
+<li><b>Centre-right</b>: Popular Union (23), Moderates (22).</li>
+<li><b>Right</b>: Patriots / Heritage League (53), National Front (27).</li>
+<li><b>Far right</b>: Identity Network (16).</li>
+<li><b>Independent</b>: Indie Media (29), Podcast Circle (22), Satire Desk (11).</li>
+<li><b>Unassigned</b>: nevel_za (9).</li>
+</ul>
+<p>Full method: <a href="llms-full.txt">llms-full.txt</a>.</p>
+</section>
+<!-- /SEO:text -->
+<noscript><p class="noscript">The Compass needs JavaScript. The method is described in <a href="llms-full.txt">llms-full.txt</a>.</p></noscript>
+
+<script src="data.js?v=9bb08b1418"></script>
+<script src="js/core.js"></script>
+<script src="js/compass.js"></script>
+</body>
+</html>

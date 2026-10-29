@@ -1,0 +1,34 @@
+{
+  "_comment": "Sample English lexicon. Adapt every list to your language and context, test it on a hand-labelled sample, and publish it with the edition.",
+  "heated": {
+    "strong": ["shame on you", "clowns", "disgusting", "traitors", "pathetic liars", "parasites"],
+    "weak": ["regime", "propaganda", "censorship", "take to the streets", "sign now", "wake up", "scandal"]
+  },
+  "system_terms": ["regime", "propaganda", "censorship"],
+  "history_guard": ["\\b1[0-9]{3}\\b", "\\bworld war\\b", "\\bliberation\\b"],
+  "exclamation_burst": 3,
+  "topics": {
+    "Politics & parties": ["government", "party", "election", "parliament", "minister", "coalition", "vote", "law"],
+    "Economy & work": ["wages", "jobs", "budget", "deficit", "energy prices", "businesses"],
+    "Foreign affairs & war": ["summit", "war", "trade deal", "abroad"],
+    "Justice": ["court", "judiciary", "prosecutor", "judges"],
+    "Climate & environment": ["heatwave", "solar", "emission"],
+    "Health": ["hospital", "vaccine", "public health"],
+    "Technology": ["ai regulation", "data privacy", "app"],
+    "Culture & sport": ["film festival", "football", "music award"],
+    "History & memory": ["1936", "1848", "1945", "uprisings", "liberation"]
+  },
+  "politics_topic": "Politics & parties",
+  "targets": {
+    "Government": ["the government", "the prime minister", "the minister"],
+    "Opposition": ["the opposition", "the opposition leader"],
+    "Press": ["the press", "journalists"],
+    "Judiciary": ["the judges", "the court"],
+    "European Union": ["brussels", "the eu"],
+    "Finance": ["big banks", "the elites"]
+  },
+  "sides": {
+    "gov": ["the government", "the prime minister", "the majority"],
+    "opp": ["the opposition", "the opposition leader"]
+  }
+}

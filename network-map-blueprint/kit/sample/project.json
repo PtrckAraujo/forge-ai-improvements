@@ -1,0 +1,53 @@
+{
+  "title": "Civic Network Map",
+  "subtitle": "Who collaborates with whom",
+  "site_url": "https://example.org/",
+  "language": "en",
+  "edition": "2026-10-29",
+  "period": { "from": "2026-01-01", "to": "2026-09-30" },
+  "platform": "Instagram",
+  "profile_url": "https://www.instagram.com/{name}/",
+  "authors": ["Example Newsroom"],
+  "credits": "Synthetic sample data: every account in this edition is invented.",
+  "contact": "corrections@example.org",
+  "content_signal": "search=yes, ai-input=yes, ai-train=no",
+
+  "inputs": {
+    "accounts": "accounts.csv",
+    "collaborations": "collaborations.csv",
+    "metrics": "metrics.csv",
+    "groups": "groups.csv",
+    "overrides": "overrides.json",
+    "photos": "photos",
+    "posts": "posts.csv",
+    "lexicon": "lexicon.json"
+  },
+  "output": "../site",
+  "bundle": "obfuscated",
+
+  "categories": [
+    { "key": "politician",        "label": "Politician",        "light": "#2E3F8F", "dark": "#7D92F2" },
+    { "key": "party",             "label": "Party",             "light": "#7440B5", "dark": "#B58CF0" },
+    { "key": "journalist",        "label": "Journalist",        "light": "#0E8794", "dark": "#38C4D2" },
+    { "key": "traditional_media", "label": "Traditional media", "light": "#3B8530", "dark": "#6CC25A" },
+    { "key": "new_media",         "label": "New media",         "light": "#DB0A78", "dark": "#FF45A6" },
+    { "key": "creator",           "label": "Content creator",   "light": "#D4870E", "dark": "#F2B33D" },
+    { "key": "other",             "label": "Other",             "light": "#7A7E85", "dark": "#8E949C" }
+  ],
+
+  "groups": [
+    { "id": "far_left",     "name": "Far left",     "hue": 12,  "chroma": 0.17 },
+    { "id": "left",         "name": "Left",         "hue": 32,  "chroma": 0.18 },
+    { "id": "centre_left",  "name": "Centre-left",  "hue": 62,  "chroma": 0.15 },
+    { "id": "centre",       "name": "Centre",       "hue": 100, "chroma": 0.13 },
+    { "id": "centre_right", "name": "Centre-right", "hue": 225, "chroma": 0.12 },
+    { "id": "right",        "name": "Right",        "hue": 262, "chroma": 0.16 },
+    { "id": "far_right",    "name": "Far right",    "hue": 300, "chroma": 0.15 },
+    { "id": "independent",  "name": "Independent",  "hue": 155, "chroma": 0.13 }
+  ],
+
+  "louvain": { "resolution": 1.8, "seed": 7, "min_cluster_size": 3 },
+  "layout": { "algorithm": "forceatlas2", "iterations": 500, "gravity": 1.0, "scaling_ratio": 2.0, "seed": 7, "width": 2400 },
+  "atlas": { "tile": 96 },
+  "compass": { "min_posts": 20, "min_month_total": 50 }
+}

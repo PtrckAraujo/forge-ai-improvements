@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- SEO:head -->
+<title>Civic Network Map · Who collaborates with whom</title>
+<meta name="description" content="Who collaborates with whom on Instagram: 381 accounts and 671 collaborations in 16 clusters.">
+<link rel="canonical" href="https://example.org/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Civic Network Map">
+<meta property="og:title" content="Civic Network Map · Who collaborates with whom">
+<meta property="og:description" content="Who collaborates with whom on Instagram: 381 accounts and 671 collaborations in 16 clusters.">
+<meta property="og:url" content="https://example.org/">
+<meta property="og:image" content="https://example.org/img/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">{"@context": "https://schema.org", "@graph": [{"@type": "WebSite", "@id": "https://example.org/#site", "name": "Civic Network Map", "url": "https://example.org/", "inLanguage": "en"}, {"@type": "WebPage", "@id": "https://example.org/#page", "name": "Civic Network Map · Who collaborates with whom", "url": "https://example.org/", "isPartOf": {"@id": "https://example.org/#site"}, "dateModified": "2026-10-29", "description": "Who collaborates with whom on Instagram: 381 accounts and 671 collaborations in 16 clusters."}, {"@type": "Dataset", "@id": "https://example.org/#data", "name": "Civic Network Map", "description": "Who collaborates with whom on Instagram: 381 accounts and 671 collaborations in 16 clusters.", "dateModified": "2026-10-29", "temporalCoverage": "2026-01-01/2026-09-30", "creator": [{"@type": "Organization", "name": "Example Newsroom"}]}]}</script>
+<!-- /SEO:head -->
+<meta name="theme-color" content="#F1EFED">
+<link rel="icon" href="img/icon.svg" type="image/svg+xml">
+<script src="js/theme-init.js"></script>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="page-map">
+
+<div class="gate" id="gate">
+  <div class="gate-box box">
+    <p class="lab">Loading</p>
+    <h1 id="gateTitle">Network map</h1>
+    <p class="gate-msg" id="gateMsg" role="status"></p>
+  </div>
+</div>
+
+<header class="bar" id="bar" hidden>
+  <a class="brand" href="./"><b id="brandTitle"></b><span id="brandSub"></span></a>
+  <div class="tools box">
+    <div class="search">
+      <input id="q" type="search" placeholder="Search profile" autocomplete="off" spellcheck="false"
+             role="combobox" aria-expanded="false" aria-controls="sugg" aria-autocomplete="list" aria-label="Search profile">
+      <kbd aria-hidden="true">/</kbd>
+      <ul class="sugg box" id="sugg" role="listbox" hidden></ul>
+    </div>
+    <button class="btn" id="btnReset" type="button">Reset</button>
+  </div>
+  <button class="btn only-narrow" id="btnMenu" type="button" aria-expanded="false" aria-controls="opts">View</button>
+</header>
+
+<aside class="opts box" id="opts" aria-label="View options" hidden>
+  <p class="lab">Map</p>
+  <button class="opt" type="button" data-opt="itr" aria-pressed="false"><b>Size = interactions</b><small>bigger square, more reactions</small></button>
+  <button class="opt" type="button" data-opt="cat" aria-pressed="true"><b>Colour = category</b><small>off: colour = cluster</small></button>
+  <button class="opt" type="button" data-opt="photos" aria-pressed="false"><b>Profile photos</b><small>faces instead of squares</small></button>
+  <p class="lab">Panels</p>
+  <button class="opt" type="button" data-opt="rail" aria-pressed="true"><b>Clusters &amp; rankings</b><small>the column on the right</small></button>
+  <button class="opt" type="button" data-opt="matrix" aria-pressed="false"><b>Cluster matrix</b><small>who collaborates with whom, by group</small></button>
+  <dl class="stats">
+    <div><dt>Accounts</dt><dd id="sNodes">—</dd></div>
+    <div><dt>Collaborations</dt><dd id="sLinks">—</dd></div>
+    <div><dt>Clusters</dt><dd id="sClusters">—</dd></div>
+    <div><dt>Avg. collab.</dt><dd id="sAvg">—</dd></div>
+    <div class="wide"><dt>Interactions</dt><dd class="hot" id="sItr">—</dd></div>
+    <div class="wide"><dt>Selection</dt><dd id="sSel">none</dd></div>
+  </dl>
+  <div class="opts-foot">
+    <button class="btn" id="btnInfo" type="button">Info</button>
+    <button class="btn" id="btnTheme" type="button">Dark</button>
+    <time id="sDate"></time>
+  </div>
+</aside>
+
+<main class="stage" id="stage" hidden>
+  <canvas id="graph" role="img" aria-label="Collaboration network: use the search box or the lists to explore it"></canvas>
+  <div class="tip" id="tip" hidden></div>
+  <div class="zoom box" role="group" aria-label="Zoom">
+    <button type="button" id="zIn" aria-label="Zoom in">+</button>
+    <button type="button" id="zOut" aria-label="Zoom out">−</button>
+    <button type="button" id="zFit" aria-label="Fit the whole network">⤢</button>
+    <output id="sZoom">100%</output>
+  </div>
+  <div class="sizes box" id="sizeLegend" hidden></div>
+  <a class="teaser box" id="teaser" href="compass.html" hidden>
+    <span class="lab"><i class="dot"></i> New · post analysis</span>
+    <b class="display">Who raises the tone?</b>
+    <small id="teaserSub"></small>
+  </a>
+</main>
+
+<section class="matrix" id="matrix" hidden aria-labelledby="mxTitle">
+  <header class="mx-head">
+    <h2 class="lab" id="mxTitle">Cluster × cluster matrix</h2>
+    <p>Each cell counts the collaborations between the cluster of the row and the cluster of the
+       column. The last column is the share that stays inside the cluster. Click a cell to see that
+       pair on the map.</p>
+    <p class="mx-brief" id="mxBrief"></p>
+  </header>
+  <div class="mx-wrap"><table class="mx" id="mx"></table></div>
+</section>
+
+<aside class="rail box" id="rail" hidden>
+  <div class="tabs" role="tablist" aria-label="Lists">
+    <button role="tab" type="button" data-tab="cat" aria-selected="true">Categories</button>
+    <button role="tab" type="button" data-tab="cluster" aria-selected="false">Clusters</button>
+    <button role="tab" type="button" data-tab="bridge" aria-selected="false">Bridges</button>
+    <button role="tab" type="button" data-tab="rank" aria-selected="false">Ranking</button>
+  </div>
+  <p class="rail-sub lab" id="railSub"></p>
+  <div class="rail-body" id="railBody" role="tabpanel"></div>
+  <p class="rail-foot lab" id="railFoot"></p>
+</aside>
+
+<aside class="card box" id="card" hidden aria-label="Profile"></aside>
+
+<dialog class="info box" id="info" aria-labelledby="infoTitle">
+  <form method="dialog"><button class="close" aria-label="Close">×</button></form>
+  <h2 class="lab" id="infoTitle">About this map</h2>
+  <div id="infoBody"></div>
+</dialog>
+
+<!-- SEO:text -->
+<section class="vh" aria-labelledby="seoTitle">
+<h2 id="seoTitle">Civic Network Map in words</h2>
+<p>Who collaborates with whom on Instagram: 381 accounts and 671 collaborations in 16 clusters. Categories: Politician 146, Content creator 65, New media 62, Other 40, Party 27, Journalist 24, Traditional media 17. Period 2026-01-01 – 2026-09-30. Edition of <time datetime="2026-10-29">2026-10-29</time>.</p>
+<h3>Groups and clusters</h3><ul>
+<li><b>Far left</b>: Red Forum (20).</li>
+<li><b>Left</b>: Left Alliance (26).</li>
+<li><b>Centre-left</b>: Progressive Party (25), Civic List (20), Green Wave (20).</li>
+<li><b>Centre</b>: Liberal Centre (22), Reform Bloc (11).</li>
+<li><b>Centre-right</b>: Popular Union (23), Moderates (22).</li>
+<li><b>Right</b>: Patriots / Heritage League (53), National Front (27).</li>
+<li><b>Far right</b>: Identity Network (16).</li>
+<li><b>Independent</b>: Indie Media (29), Podcast Circle (22), Satire Desk (11).</li>
+<li><b>Unassigned</b>: nevel_za (9).</li>
+</ul>
+<p>Full method: <a href="llms-full.txt">llms-full.txt</a>.</p>
+</section>
+<!-- /SEO:text -->
+<noscript><p class="noscript">This map needs JavaScript. The method is described in <a href="llms-full.txt">llms-full.txt</a>.</p></noscript>
+
+<script src="data.js?v=9bb08b1418"></script>
+<script src="js/core.js"></script>
+<script src="js/map.js"></script>
+</body>
+</html>
