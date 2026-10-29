@@ -11,6 +11,8 @@ from typing import Iterable
 
 import networkx as nx
 
+from errors import InputError
+
 
 def build_graph(ids: Iterable[str], edges: Iterable[tuple[str, str]]) -> nx.Graph:
     G = nx.Graph()
@@ -36,35 +38,47 @@ def detect_communities(G: nx.Graph, resolution: float, seed: int,
 
 def apply_overrides(comms: list[set[str]], misc: set[str], overrides: dict,
                     known: set[str]) -> tuple[list[set[str]], list[dict]]:
-    """Editorial corrections on top of the algorithm, returned so they can be disclosed."""
+    """Editorial corrections on top of the algorithm, returned so they can be disclosed.
+
+    Overrides outlive editions, so every failure says which entry is stale and
+    why, instead of crashing: an account can disappear, or drop into the
+    isolated/small-groups bucket when it loses its collaborations.
+    """
     disclosed = []
 
-    def find(node: str) -> int:
+    def account(entry: dict, key: str, kind: str) -> str:
+        if not isinstance(entry, dict) or not entry.get(key):
+            raise InputError(f"overrides.json: {kind} entry {entry!r} needs a {key!r} account")
+        a = str(entry[key]).strip().lower()
+        if a not in known:
+            raise InputError(f"overrides.json: {kind} {key}={a!r} is not in accounts.csv")
+        return a
+
+    def find(node: str, kind: str) -> int:
         for i, c in enumerate(comms):
             if node in c:
                 return i
-        raise ValueError(f"override refers to {node!r}, which is not in any cluster")
+        raise InputError(f"overrides.json: {kind} refers to {node!r}, which has no cluster in "
+                         "this edition (isolated, or in a group smaller than min_cluster_size); "
+                         "update or remove that override")
 
     for m in overrides.get("merge", []):
-        for key in ("into", "from"):
-            if m[key] not in known:
-                raise ValueError(f"merge override: unknown account {m[key]!r}")
-        a, b = find(m["into"]), find(m["from"])
+        into, frm = account(m, "into", "merge"), account(m, "from", "merge")
+        a, b = find(into, "merge"), find(frm, "merge")
         if a != b:
             comms[a] |= comms[b]
             comms[b] = set()
-        disclosed.append({"type": "merge", **m})
+        disclosed.append({**m, "type": "merge", "into": into, "from": frm})
 
     for mv in overrides.get("move", []):
-        if mv["id"] not in known or mv["to"] not in known:
-            raise ValueError(f"move override: unknown account in {mv!r}")
-        target = find(mv["to"])
-        if mv["id"] in misc:
-            misc.discard(mv["id"])
+        who, to = account(mv, "id", "move"), account(mv, "to", "move")
+        target = find(to, "move")
+        if who in misc:
+            misc.discard(who)
         else:
-            comms[find(mv["id"])].discard(mv["id"])
-        comms[target].add(mv["id"])
-        disclosed.append({"type": "move", **mv})
+            comms[find(who, "move")].discard(who)
+        comms[target].add(who)
+        disclosed.append({**mv, "type": "move", "id": who, "to": to})
 
     return [c for c in comms if c], disclosed
 

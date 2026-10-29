@@ -163,19 +163,26 @@ function alpha(hex, a) {
 
 /* ---------------------------------------------------------------- formats */
 const nf = new Intl.NumberFormat(document.documentElement.lang || 'en');
+const UNITS = ['', 'K', 'M', 'B'];
 const fmt = {
   int: v => (v == null ? 'n/r' : nf.format(Math.round(v))),
+  /* 1234 → 1.2K, 56789 → 57K. The unit is chosen after rounding, so 999,600
+     reads 1.0M (not 1000K) and 9,960 reads 10K (not 10.0K). */
   short(v) {
     if (v == null) return 'n/r';
-    const a = Math.abs(v);
-    const [d, u] = a >= 1e9 ? [1e9, 'B'] : a >= 1e6 ? [1e6, 'M'] : a >= 1e3 ? [1e3, 'K'] : [1, ''];
-    const x = v / d;
-    return (u && x < 10 ? x.toFixed(1) : Math.round(x)) + u;
+    let i = 0, x = v;
+    while (Math.abs(x) >= 1000 && i < UNITS.length - 1) { x /= 1000; i++; }
+    let r = i && Math.abs(x) < 9.95 ? Math.round(x * 10) / 10 : Math.round(x);
+    if (Math.abs(r) >= 1000 && i < UNITS.length - 1) { i++; r = Math.round(r / 100) / 10; }
+    return (i && Math.abs(r) < 10 ? r.toFixed(1) : String(r)) + UNITS[i];
   },
+  /* one decimal below 10% when no precision is asked (2.7%, 12%); rounding
+     decides the form, so 9.96% reads 10%, not 10.0% */
   pct(v, digits = 0) {
     if (v == null) return 'n.d.';
     const p = v * 100;
-    return (p > 0 && p < 10 && digits === 0 ? p.toFixed(1) : p.toFixed(digits)) + '%';
+    if (digits === 0 && p > 0 && p < 9.95) return p.toFixed(1) + '%';
+    return p.toFixed(digits) + '%';
   },
 };
 const esc = s => String(s ?? '').replace(/[&<>"']/g,

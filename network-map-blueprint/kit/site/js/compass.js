@@ -32,9 +32,9 @@ const P = D.profiles.map((p, i) => {
 const byKey = new Map(P.map(p => [p.key, p]));
 const MAX_TXT = Math.max(...P.map(p => p.txt));
 const AXES = {
-  pol: { title: 'Talks about politics →', field: 'pol', desc: 'share of posts about politics' },
-  side: { title: 'Aimed at the government →', field: 'side', desc: 'share of heated, side-naming posts aimed at the government' },
-  vague: { title: 'Unnamed enemy →', field: 'vague', desc: 'share of heated posts naming no coded target' },
+  pol: { title: 'Talks about politics →', desc: 'share of posts about politics' },
+  side: { title: 'Aimed at the government →', desc: 'share of heated, side-naming posts aimed at the government' },
+  vague: { title: 'Unnamed enemy →', desc: 'share of heated posts naming no coded target' },
 };
 const TONE = {
   light: { informative: '#4F7393', mixed: '#C9820A', militant: '#DB0A78' },
@@ -58,14 +58,23 @@ function recolor() {
 }
 
 /* ------------------------------------------------------------ values */
+/* Both coordinates always come from the same period: in a month, every axis
+   is that month's, with the same minimums as the whole period (so a month
+   with few heated posts puts a profile on the n.d. strip, not on a guess). */
 function values(p) {
-  let acc = p.acc, pol = p.pol, off = false;
+  let acc = p.acc, pol = p.pol, side = p.side, vague = p.vague, off = false;
   if (S.month >= 0) {
-    const [n, hot, polN] = p.months[S.month] || [0, 0, 0];
-    if (n >= T.min_month) { acc = hot / n; pol = polN / n; }
-    else off = true;                       // too few posts that month: goes dark, not to zero
+    const [n = 0, hot = 0, polN = 0, gov = 0, opp = 0, unnamed = 0] = p.months[S.month] || [];
+    if (n >= T.min_month) {
+      acc = hot / n;
+      pol = polN / n;
+      side = gov + opp >= T.min_sides ? gov / (gov + opp) : null;
+      vague = hot >= T.min_heated ? unnamed / hot : null;
+    } else {
+      off = true;                          // too few posts that month: goes dark, not to zero
+    }
   }
-  const y = S.axis === 'pol' ? pol : p[AXES[S.axis].field];
+  const y = S.axis === 'pol' ? pol : S.axis === 'side' ? side : vague;
   return { acc, y, nd: y == null, off };
 }
 
@@ -75,7 +84,8 @@ const gBack = el('g'), gDots = el('g'), gLabels = el('g');
 svg.append(gBack, gDots, gLabels);
 const dots = P.map(p => {
   const g = el('g', { class: 'dot', 'data-i': p.i, tabindex: '-1' });
-  g.append(el('circle', { class: 'b' }));
+  // a transparent disc on top: small dots and hollow n.d. rings stay easy to click
+  g.append(el('circle', { class: 'b' }), el('circle', { class: 'hit' }));
   gDots.append(g);
   return g;
 });
@@ -90,9 +100,23 @@ const X_STEPS = [0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1];
 const X_TICKS = [0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1];
 const X_MAX = X_STEPS.find(v => v >= 1.04 * Math.max(0.03, ...P.map(p => p.acc))) || 1;
 
+/* Positions (and the O(n²) overlap pass) depend only on axis, month, plot
+   size and theme. Filters, selection and colour changes reuse them and only
+   repaint, so typing in the filter box stays cheap with hundreds of profiles. */
+let geo = null;
 function draw() {
   const box = svg.getBoundingClientRect();
-  const W = Math.max(300, box.width), H = Math.max(280, box.height);
+  const W = Math.max(300, Math.round(box.width)), H = Math.max(280, Math.round(box.height));
+  const key = [S.axis, S.month, W, H, Kit.theme.get()].join('|');
+  if (!geo || geo.key !== key) geo = { key, ...layoutPlot(W, H) };
+  // a single month rarely has enough heated posts for these axes: say why dots sit on n.d.
+  const note = $('cpNote');
+  note.hidden = !(S.month >= 0 && S.axis !== 'pol');
+  note.textContent = note.hidden ? '' : `This month's posts only · n.d. = fewer than ${
+    S.axis === 'side' ? T.min_sides + ' heated posts naming a side' : T.min_heated + ' heated posts'}`;
+  paint();
+}
+function layoutPlot(W, H) {
   const narrow = W < 520;
   const vals = P.map(values);
   const hasNd = vals.some(v => v.nd && !v.off);
@@ -137,7 +161,10 @@ function draw() {
   });
   relax(pts.filter(q => !q.v.nd && !q.v.off), x0, x1);
   pack(pts.filter(q => q.v.nd && !q.v.off), x1);
-
+  return { pts, narrow, x1, W };
+}
+function paint() {
+  const { pts, narrow, x1, W } = geo;
   /* draw bigger circles first, the selected one last */
   const order = pts.slice().sort((a, b) => b.r - a.r);
   if (S.sel) order.push(order.splice(order.findIndex(q => q.p === S.sel), 1)[0]);
@@ -150,6 +177,7 @@ function draw() {
     c.setAttribute('fill', q.p.col);
     c.classList.toggle('nd', q.v.nd);
     c.style.stroke = q.v.nd ? q.p.col : '';           // inline: the CSS rim would hide the ring
+    g.lastChild.setAttribute('r', Math.max(q.r, 7));
     g.classList.toggle('off', q.v.off);
     g.classList.toggle('dim', !q.v.off && ((S.sel && S.sel !== q.p) || !filtered.has(q.p)));
     g.classList.toggle('sel', S.sel === q.p);
@@ -249,7 +277,7 @@ function timeline() {
   const max = Math.max(...shown.map(rate), 0.001);
   const label = j => new Date(D.months[j] + '-15').toLocaleString(document.documentElement.lang, { month: 'short' });
   tl.innerHTML = `<button type="button" class="play" id="play" aria-label="Play month by month">▶</button>` +
-    `<button type="button" data-m="-1" aria-pressed="true"><span class="t"><b style="height:${100 * D.profiles.reduce((s, p) => s + p.heated, 0) / D.total_posts / max}%"></b></span>All ${fmt.pct(D.profiles.reduce((s, p) => s + p.heated, 0) / D.total_posts, 1)}</button>` +
+    `<button type="button" data-m="-1" aria-pressed="true"><span class="t"><b style="height:${Math.min(100, 100 * D.profiles.reduce((s, p) => s + p.heated, 0) / D.total_posts / max)}%"></b></span>All ${fmt.pct(D.profiles.reduce((s, p) => s + p.heated, 0) / D.total_posts, 1)}</button>` +
     shown.map(j => `<button type="button" data-m="${j}" aria-pressed="false"><span class="t"><b style="height:${100 * rate(j) / max}%"></b></span>${esc(label(j))} ${fmt.pct(rate(j), 1)}</button>`).join('');
   tl.addEventListener('click', e => {
     if (e.target.closest('#play')) { play ? stop() : startPlay(); return; }
@@ -264,6 +292,7 @@ function setMonth(j) {
 }
 function startPlay() {
   const shown = D.months_shown;
+  if (S.month === shown[shown.length - 1]) S.month = -1;   // at the end: play again from the start
   const next = () => {
     const k = shown.indexOf(S.month);
     if (k === shown.length - 1) { stop(); setMonth(-1); return; }
@@ -300,7 +329,9 @@ function hbars(counts, names, total, n = 4) {
 }
 function detail(p) {
   const t = Kit.theme.get();
-  const mx = Math.max(1, ...p.months.map(m => (m[0] ? m[1] / m[0] : 0)).map(v => v * 100));
+  // months with too few posts are not drawn, so they must not set the scale either
+  const rates = p.months.map(m => (m[0] >= T.min_month ? m[1] / m[0] : null));
+  const mx = Math.max(0.01, ...rates.filter(r => r != null));
   side.innerHTML = `<div class="side-detail">
     <div class="card-head" style="padding:0 0 10px;border:0"><span class="lab">Profile</span><button class="close" type="button" aria-label="Back to the ranking">×</button></div>
     <h2>${esc(p.label)}</h2>${p.node && p.node.dn ? `<p class="lab">${esc(p.node.name)}</p>` : ''}
@@ -316,7 +347,8 @@ function detail(p) {
     <h3 class="lab">Main topics</h3>${hbars(p.topics, D.topics, p.txt)}
     <h3 class="lab">Targets named</h3>${hbars(p.targets, D.targets, p.txt, 3)}
     <h3 class="lab">Heated share, month by month</h3>
-    <div class="months" aria-hidden="true">${p.months.map(m => `<span style="height:${m[0] >= T.min_month ? 100 * (m[1] / m[0]) * 100 / mx : 0}%" title=""></span>`).join('')}</div>
+    <div class="months">${rates.map((r, j) => `<span style="height:${r == null ? 0 : (100 * r / mx).toFixed(1)}%"
+      title="${esc(D.months[j])}: ${r == null ? 'too few posts' : fmt.pct(r, 1) + ' heated'}"></span>`).join('')}</div>
     ${p.node ? `<p style="margin-top:14px"><a class="btn" href="./#${encodeURIComponent(p.node.id)}">See in the network →</a></p>` : ''}
   </div>`;
 }

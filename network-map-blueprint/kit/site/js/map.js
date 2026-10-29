@@ -130,7 +130,7 @@ function resize() {
   cv.width = Math.round(W * DPR);
   cv.height = Math.round(H * DPR);
   if (!touched) fitAll(0);
-  else if (sel) centerOn(sel, 0);
+  else if (sel) centerOn(sel, 0, view.k);
   else { view.x += (W - was.W) / 2; view.y += (H - was.H) / 2; }
   needsDraw = true;
 }
@@ -522,13 +522,26 @@ cv.addEventListener('pointermove', e => {
   if (h !== hover) { hover = h; needsDraw = true; cv.style.cursor = h ? 'pointer' : ''; }
   showTip(h, e.clientX, e.clientY);
 });
+/* A double-click arrives as two clicks and then a dblclick. The second click
+   must not toggle the selection the first one made (select, then deselect):
+   it is skipped, and the dblclick zooms on the node of the first click, which
+   may have slid away under the camera by then. */
+const DBL_MS = 400, DBL_PX = 10;
+let lastClick = null, dblNode = null;
 function endPointer(e, click) {
   pts.delete(e.pointerId);
   if (pinch && pts.size < 2) { pinch = null; return; }
   if (click && down && !panning) {
-    const n = down.hit;
-    if (n) n === sel ? clearSelection() : select(n);
-    else if (sel) clearSelection();
+    const n = down.hit, now = performance.now();
+    if (lastClick && now - lastClick.t < DBL_MS &&
+        Math.hypot(e.clientX - lastClick.x, e.clientY - lastClick.y) < DBL_PX) {
+      dblNode = lastClick.n;
+      lastClick = null;
+    } else {
+      lastClick = { t: now, x: e.clientX, y: e.clientY, n };
+      if (n) n === sel ? clearSelection() : select(n);
+      else if (sel) clearSelection();
+    }
   }
   down = null;
 }
@@ -545,8 +558,12 @@ cv.addEventListener('wheel', e => {
   zoomAt(Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0022)), e.clientX, e.clientY);
 }, { passive: false });
 cv.addEventListener('dblclick', e => {
-  const n = pick(e.clientX, e.clientY);
-  if (n) { touched = true; flyTo(n.x, n.y, Math.max(view.k, 2.2), 560, e.clientX, e.clientY); }
+  const n = dblNode || pick(e.clientX, e.clientY);
+  dblNode = null;
+  if (!n) return;
+  if (n !== sel) select(n, { fly: false });
+  touched = true;
+  centerOn(n, 560, Math.max(view.k, 2.2));
 });
 $('zIn').onclick = () => zoomAt(1.35, W / 2, H / 2);
 $('zOut').onclick = () => zoomAt(1 / 1.35, W / 2, H / 2);
@@ -642,11 +659,17 @@ function focusOn(kind, key, { frame = true } = {}) {
       set = new Set(nodes.filter(n => n.c === a || n.c === b));
       edge = l => (l.a.c === a && l.b.c === b) || (l.a.c === b && l.b.c === a);
     }
-    if (!set || !set.size) { focus = null; return; }
-    focus = { kind, key, set, edge };
-    if (kind === 'cat' && !S.cat) setOpt('cat', true);
-    if ((kind === 'cluster' || kind === 'group' || kind === 'pair') && S.cat) setOpt('cat', false);
-    if (frame && kind !== 'cat') { touched = true; fitNodes([...set]); }
+    if (set && set.size) {
+      focus = { kind, key, set, edge };
+      // the list that names this focus is the one on show, with its colouring
+      const tab = kind === 'cat' ? 'cat' : 'cluster';
+      if (S.tab !== tab) showTab(tab);
+      if (kind === 'cat' && !S.cat) setOpt('cat', true);
+      if (kind !== 'cat' && S.cat) setOpt('cat', false);
+      if (frame && kind !== 'cat') { touched = true; fitNodes([...set]); }
+    } else {
+      focus = null;                          // unknown key (e.g. a stale link): clear, don't keep it
+    }
   }
   setHash(focusHash());
   markRail();
@@ -706,7 +729,7 @@ function moveSugg(d) {
 function choose(n) {
   closeSugg();
   q.blur();
-  document.body.classList.remove('menu-open');
+  setMenu(false);
   select(n);
 }
 q.addEventListener('input', suggest);
@@ -740,7 +763,7 @@ function setOpt(key, val) {
 }
 optBtns.forEach(b => b.addEventListener('click', () => {
   setOpt(b.dataset.opt, !S[b.dataset.opt]);
-  if (b.dataset.opt === 'matrix' || b.dataset.opt === 'rail') document.body.classList.remove('menu-open');
+  if (b.dataset.opt === 'matrix' || b.dataset.opt === 'rail') setMenu(false);
 }));
 
 function sizeLegend() {
@@ -803,6 +826,9 @@ function bars(list, frac, right) {
     <small>${i + 1}</small><span>${esc(n.name)}</span>${right(n)}
     <i class="track"><b style="width:${(100 * frac(n)).toFixed(1)}%;background:${n.col}"></b></i></button>`).join('');
 }
+/* Opening a tab sets the matching view once (categories → colour by
+   category, ranking → size by interactions…). Afterwards the user's own
+   switches win: re-rendering the list (theme change) applies no preset. */
 function showTab(t) {
   S.tab = t;
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
@@ -810,10 +836,15 @@ function showTab(t) {
   if ((t === 'cluster' || t === 'bridge') && S.cat) setOpt('cat', false);
   if (t === 'rank' && !S.itr) setOpt('itr', true);
   if (S.bridge !== (t === 'bridge')) { S.bridge = t === 'bridge'; needsDraw = true; }
-  $('railSub').textContent = TABS[t].sub;
-  $('railFoot').textContent = TABS[t].foot;
-  railBody.innerHTML = TABS[t].render();
+  renderRail();
   railBody.scrollTop = 0;
+}
+function renderRail() {
+  $('railSub').textContent = TABS[S.tab].sub;
+  $('railFoot').textContent = TABS[S.tab].foot;
+  const top = railBody.scrollTop;
+  railBody.innerHTML = TABS[S.tab].render();
+  railBody.scrollTop = top;
   markRail();
 }
 function markRail() {
@@ -910,7 +941,7 @@ $('btnTheme').onclick = () => Kit.theme.toggle();
 Kit.theme.on(() => {
   recolor();
   themeLabel();
-  showTab(S.tab);
+  renderRail();
   if (sel) fillCard(sel);
   if (matrixBuilt) { matrixBuilt = false; if (S.matrix) buildMatrix(); }
 });
@@ -925,22 +956,23 @@ $('btnReset').onclick = () => {
   touched = false;
   fitAll(600);
 };
-$('btnMenu').onclick = () => {
-  const open = document.body.classList.toggle('menu-open');
+function setMenu(open) {
+  document.body.classList.toggle('menu-open', open);
   $('btnMenu').setAttribute('aria-expanded', String(open));
-};
+}
+$('btnMenu').onclick = () => setMenu(!document.body.classList.contains('menu-open'));
 
 addEventListener('keydown', e => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
   if (e.key === '/' && !typing) {
     e.preventDefault();
-    if (!wide()) document.body.classList.add('menu-open');
+    if (!wide()) setMenu(true);
     q.focus();
     return;
   }
   if (e.key !== 'Escape' || typing || $('info').open) return;
   skipIntro();
-  if (document.body.classList.contains('menu-open')) document.body.classList.remove('menu-open');
+  if (document.body.classList.contains('menu-open')) setMenu(false);
   else if (S.matrix) setOpt('matrix', false);
   else if (sel) clearSelection();
   else if (focus) focusOn(focus.kind, focus.key);

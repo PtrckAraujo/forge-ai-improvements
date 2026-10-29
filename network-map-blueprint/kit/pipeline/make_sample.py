@@ -143,19 +143,19 @@ def build(out: Path) -> None:
 
     start = date(2026, 1, 1)
     with open(out / "accounts.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, ["id", "name", "display_name", "category"])
+        w = csv.DictWriter(f, ["id", "name", "display_name", "category"], lineterminator="\n")
         w.writeheader()
         w.writerows(accounts)
 
     with open(out / "collaborations.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["source", "target", "date", "evidence_url"])
         for k, (a, b) in enumerate(sorted(edges)):
             d = start + timedelta(days=rng.randrange(270))
             w.writerow([a, b, d.isoformat(), f"https://example.org/evidence/{k:05d}"])
 
     with open(out / "metrics.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["id", "followers", "interactions", "follower_growth"])
         for a in accounts:
             if rng.random() < 0.1:
@@ -172,7 +172,7 @@ def build(out: Path) -> None:
               "National Front", "Patriots", "Heritage League", "Identity Network",
               "Indie Media", "Podcast Circle", "Satire Desk"]
     with open(out / "groups.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["anchor", "label", "group"])
         for (group, members), label in zip(communities, labels):
             w.writerow([members[0], label, group])
@@ -220,7 +220,7 @@ def write_posts(out: Path, rng: random.Random, communities) -> None:
             rows.append([a, f"2026-{month:02d}-{day:02d}", text])
     rows.sort()
     with open(out / "posts.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["account", "date", "caption"])
         w.writerows(rows)
 

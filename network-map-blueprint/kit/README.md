@@ -54,15 +54,23 @@ on its own.
 All inputs are CSV, UTF-8, with a header row. Blank cells mean "not measured" and are kept as
 `null`, never as 0.
 
+- **Account handles match case-insensitively everywhere:** accounts, collaborations, metrics,
+  groups, overrides, posts and photo file names. Surrounding spaces are ignored.
+- **Optional inputs:** to leave one out, set it to `null` in `project.json` or drop the key.
+  A file that is named but missing is an error.
+- **Everything is checked before anything is written.** Unknown accounts, numbers that aren't
+  numbers, stale overrides, mistyped anchors and bad project settings stop the build with
+  `input error:` plus the file, line and fix. There is no Python traceback.
+
 | File | Columns | Notes |
 |---|---|---|
 | `accounts.csv` | `id, name, display_name, category` | `id` is lower-case `[a-z0-9._-]` and is used in URLs; `category` is a key from the project's `categories` |
 | `collaborations.csv` | `source, target, date, evidence_url` | one row per *observed* collaboration; duplicates and self-links are dropped; evidence stays private (it is not shipped) |
-| `metrics.csv` | `id, followers, interactions, follower_growth` | growth is a fraction (`0.12` = +12%); optional file |
-| `groups.csv` | `anchor, label, group` | names a cluster and assigns its editorial group, by **any member account** (cluster numbers change between runs, members don't); two anchors landing in the same cluster give the label "A / B" |
+| `metrics.csv` | `id, followers, interactions, follower_growth` | optional; every `id` must be in `accounts.csv`; followers and interactions are whole numbers; growth is a fraction (`0.12` = +12%) |
+| `groups.csv` | `anchor, label, group` | names a cluster and assigns its editorial group, by **any member account** (cluster numbers change between runs, members don't). Every anchor must be in `accounts.csv`. Two anchors landing in the same cluster give the label "A / B", and the first non-empty group wins (a warning names any conflict) |
 | `overrides.json` | `{"merge": [{into, from, reason}], "move": [{id, to, reason}]}` | editorial corrections on top of the algorithm; each one is listed in the info panel and `llms-full.txt` |
-| `photos/<id>.(png\|jpg\|webp)` | | optional; centre-cropped to `atlas.tile` px |
-| `posts.csv` | `account, date, caption` | optional, for the Compass; empty caption = image-only post |
+| `photos/<id>.(png\|jpg\|webp)` | | optional; the file name is the account id, any case; centre-cropped to `atlas.tile` px |
+| `posts.csv` | `account, date, caption` | optional, for the Compass; `date` is `YYYY-MM-DD`; empty caption = image-only post |
 | `lexicon.json` | | heated terms (strong = 2 points, weak = 1), system terms, history guard, topics, targets, sides; see `sample/lexicon.json` |
 
 ## `project.json`
@@ -139,7 +147,8 @@ and cache rules in Cloudflare Pages and Netlify format. Cloudflare Pages also se
 - `clusters[]` are `{label, hub, size, group, misc}`.
 - `compass.profiles[]` include `acc` (heated share), `pol`, `tone`, `vague`, `side`,
   `topics[]`, `topics_heated[]`, `targets[]`, `targets_heated[]`, and `months[]` as
-  `[posts, heated, political]`.
+  `[posts with text, heated, political, heated at government, heated at opposition,
+  heated naming no target]`.
 
 ## Tests
 
@@ -170,6 +179,8 @@ The blueprint (§13) lists quirks in the original. The kit fixes these:
 - **Hit testing:** it uses the size actually drawn, so enlarged photo and bridge squares are
   easy to click.
 - **Avatars:** the CSS avatar falls back to initials when the atlas didn't load.
+- **Month view:** all three Compass axes use that month's posts. The original keeps "against
+  whom" and "unnamed enemy" on the whole period, so each dot mixes two periods.
 - **CSP:** no inline scripts, so no hashes are needed.
 
 Left out for now: multi-profile comparison, the title intro, the mobile notice, the editorial

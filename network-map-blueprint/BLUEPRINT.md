@@ -75,7 +75,8 @@ Key properties (**verified**):
   Each is an IIFE in `'use strict'` mode. They share three globals: `window.MAPPATURA_ENC`
   (the encrypted payload), `window.INTRO` (intro promise) and `window.COMPASS` (the Compass
   module API, consumed by `graph.js`). Comments are in Italian and extensive.
-- **Total transfer is about 2.5 MB**, and the photo atlas is 1.8 MB of that:
+- **The map page weighs about 2.3 MB before compression**, and the photo atlas is 1.8 MB of
+  that. Less goes over the wire: text files are served `zstd`-compressed.
 
 | File | Bytes | Role |
 |---|---:|---|
@@ -93,7 +94,8 @@ Key properties (**verified**):
 ## 3. Hosting and delivery (verified from response headers)
 
 - **Cloudflare** serves every response (`server: cloudflare`, `cf-cache-status: HIT` even on
-  HTML), with HTTP/3 and `zstd` compression for text.
+  HTML), with `zstd` compression for text. It advertises HTTP/3 (`alt-svc: h3`); the
+  captures don't show which protocol the browser actually used.
 - `/compass` is served from `compass.html`. Extension-less "pretty URLs" plus edge-cached
   HTML with weak ETags match **Cloudflare Pages** defaults (*inferred*; any static host with a
   rewrite works).
@@ -545,8 +547,9 @@ wins. There is no spatial index; at about 1,200 nodes that is fine.
 - **Per-route head:** `<title>`, description, canonical, OG and Twitter tags with a 1200×630
   image per route (`og.png`, `og-compass.png`), and `robots: index, follow,
   max-image-preview:large`.
-- **JSON-LD `@graph`:** WebSite, WebPage (map) and WebPage (Compass), linked by `@id`, with
-  `dateModified` set to the edition date.
+- **JSON-LD `@graph`:** six nodes linked by `@id`: the WebSite, a WebPage for the map and
+  one for the Compass, an Organization for each author (Liberi Network, Arcadia), and the
+  Dataset the pages are `about`. `dateModified` is set to the edition date.
 - **A visually hidden summary** (`<section class="vh">`) describes the network in words:
   counts, groups and clusters with sizes, a Compass summary, and links. Crawlers get real
   content even though the data itself is encrypted.

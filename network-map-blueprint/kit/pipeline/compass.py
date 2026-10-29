@@ -20,6 +20,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from errors import InputError
+
 DEFAULT_THRESHOLDS = {
     "heated_at": 2,
     "informative": 0.02,
@@ -32,21 +34,34 @@ DEFAULT_THRESHOLDS = {
 }
 
 
+MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])")
+
+
 def _matcher(terms: list[str]) -> list[tuple[str, re.Pattern]]:
     return [(t, re.compile(r"(?<!\w)" + re.escape(t.lower()) + r"(?!\w)")) for t in terms]
 
 
 class Lexicon:
     def __init__(self, spec: dict):
-        self.strong = _matcher(spec["heated"]["strong"])
-        self.weak = _matcher(spec["heated"]["weak"])
-        self.system = {t.lower() for t in spec.get("system_terms", [])}
-        self.history = [re.compile(p, re.I) for p in spec.get("history_guard", [])]
-        self.burst = re.compile(r"!{%d,}" % spec.get("exclamation_burst", 3))
-        self.topics = [(name, _matcher(words)) for name, words in spec["topics"].items()]
-        self.politics_topic = [n for n, _ in self.topics].index(spec["politics_topic"])
-        self.targets = [(name, _matcher(words)) for name, words in spec["targets"].items()]
-        self.sides = {side: _matcher(words) for side, words in spec["sides"].items()}
+        try:
+            self.strong = _matcher(spec["heated"]["strong"])
+            self.weak = _matcher(spec["heated"]["weak"])
+            self.system = {t.lower() for t in spec.get("system_terms", [])}
+            self.history = [re.compile(p, re.I) for p in spec.get("history_guard", [])]
+            self.burst = re.compile(r"!{%d,}" % int(spec.get("exclamation_burst", 3)))
+            self.topics = [(name, _matcher(words)) for name, words in spec["topics"].items()]
+            self.targets = [(name, _matcher(words)) for name, words in spec["targets"].items()]
+            self.sides = {side: _matcher(spec["sides"][side]) for side in ("gov", "opp")}
+        except KeyError as e:
+            raise InputError(f"lexicon.json: missing key {e}") from None
+        except re.error as e:
+            raise InputError(f"lexicon.json: history_guard pattern {e.pattern!r} is not a valid "
+                             f"regular expression ({e})") from None
+        names = [n for n, _ in self.topics]
+        if spec.get("politics_topic") not in names:
+            raise InputError(f"lexicon.json: politics_topic {spec.get('politics_topic')!r} must be "
+                             f"one of the topics {names}")
+        self.politics_topic = names.index(spec["politics_topic"])
 
     def score(self, text: str) -> dict:
         low = text.lower()
@@ -73,9 +88,23 @@ def compute(posts_csv: Path, lexicon: Lexicon, node_index: dict[str, int],
             thresholds: dict | None = None) -> dict | None:
     T = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     by_account: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    errors = []
     with open(posts_csv, newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            by_account[row["account"]].append((row["date"][:7], row["caption"] or ""))
+        reader = csv.DictReader(f)
+        missing = {"account", "date", "caption"} - set(reader.fieldnames or [])
+        if missing:
+            raise InputError(f"{posts_csv.name}: missing column(s) {sorted(missing)}")
+        for line, row in enumerate(reader, start=2):
+            # same normalisation as accounts.csv, so the profile links to its map node
+            account = (row["account"] or "").strip().lower()
+            date = (row["date"] or "").strip()
+            if not account or not MONTH_RE.match(date):
+                errors.append(f"line {line}: need an account and a YYYY-MM-DD date, got "
+                              f"{row['account']!r}, {row['date']!r}")
+                continue
+            by_account[account].append((date[:7], row["caption"] or ""))
+    if errors:
+        raise InputError(f"{posts_csv.name}:\n  " + "\n  ".join(errors[:30]))
     if not by_account:
         return None
 
@@ -93,7 +122,8 @@ def compute(posts_csv: Path, lexicon: Lexicon, node_index: dict[str, int],
         total_posts += len(texts)
         topics, topics_heated = [0] * nt, [0] * nt
         targets, targets_heated = [0] * ng, [0] * ng
-        per_month = [[0, 0, 0] for _ in months]
+        # per month: posts with text, heated, political, heated at gov, at opp, unnamed
+        per_month = [[0, 0, 0, 0, 0, 0] for _ in months]
         heated = gov = opp = unnamed = 0
 
         for month, text in texts:
@@ -113,10 +143,13 @@ def compute(posts_csv: Path, lexicon: Lexicon, node_index: dict[str, int],
             if hot:
                 heated += 1
                 unnamed += not s["targets"]
-                if s["sides"] == ["gov"]:
+                m[5] += not s["targets"]
+                if s["sides"] == ["gov"]:       # posts naming both sides count for neither
                     gov += 1
+                    m[3] += 1
                 elif s["sides"] == ["opp"]:
                     opp += 1
+                    m[4] += 1
 
         acc = heated / len(texts)
         tone = ("informative" if acc < T["informative"]

@@ -348,6 +348,7 @@ body.page-compass { overflow-y: auto; }
 #cpSvg .dot { transition: transform 720ms var(--ease), opacity 280ms; cursor: pointer; }
 #cpSvg .dot circle.b { stroke: var(--surface); stroke-width: 1; fill-opacity: 0.85; }
 #cpSvg .dot circle.b.nd { fill: none; stroke-width: 1.4; }
+#cpSvg .dot circle.hit { fill: transparent; stroke: none; }
 #cpSvg .dot.off { opacity: 0.08; pointer-events: none; }
 #cpSvg .dot.dim { opacity: 0.25; }
 #cpSvg .dot.sel circle.b { stroke: var(--ink); stroke-width: 2.4; fill-opacity: 1; }

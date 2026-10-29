@@ -20,6 +20,8 @@ import os
 import re
 from pathlib import Path
 
+from errors import InputError
+
 
 def _b64(b: bytes) -> str:
     return base64.b64encode(b).decode("ascii")
@@ -28,7 +30,7 @@ def _b64(b: bytes) -> str:
 def read_pepper(core_js: Path) -> str:
     m = re.search(r"const PEPPER = '([^']+)'", core_js.read_text(encoding="utf-8"))
     if not m:
-        raise ValueError(f"no PEPPER constant found in {core_js}")
+        raise InputError(f"{core_js}: no `const PEPPER = '...'` line, needed for the obfuscated bundle")
     return m.group(1)
 
 
@@ -45,20 +47,32 @@ def write_bundle(data: dict, site: Path, mode: str) -> str:
         env = {"v": 1, "z": "gzip", "salt": _b64(salt), "iv": _b64(iv), "ct": _b64(ct)}
         body = ("window.MAP_DATA_ENC = " + json.dumps(env) + ";\n").encode("ascii")
     else:
-        raise ValueError(f"unknown bundle mode {mode!r}")
+        raise InputError(f"project.json: bundle must be plain or obfuscated, not {mode!r}")
     (site / "data.js").write_bytes(body)
     return hashlib.sha256(body).hexdigest()[:10]
 
 
-def _replace_block(text: str, name: str, content: str) -> str:
+def _replace_block(text: str, name: str, content: str, page: str) -> str:
     pattern = re.compile(rf"(<!-- SEO:{name} -->)(.*?)(<!-- /SEO:{name} -->)", re.S)
     if not pattern.search(text):
-        raise ValueError(f"marker <!-- SEO:{name} --> not found")
+        raise InputError(f"site/{page}: markers <!-- SEO:{name} --> … <!-- /SEO:{name} --> not found")
     return pattern.sub(lambda m: m.group(1) + "\n" + content + "\n" + m.group(3), text)
 
 
-def _head(meta: dict, title: str, description: str, url: str, image: str) -> str:
-    e = lambda s: html.escape(s, quote=True)
+def _e(s) -> str:
+    return html.escape(str(s), quote=True)
+
+
+def _json_in_script(obj) -> str:
+    """JSON safe inside <script>: '<', '>' and '&' as unicode escapes, so a
+    value containing '</script>' or '<!--' cannot end the element."""
+    return (json.dumps(obj, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
+def _head(meta: dict, title: str, description: str, url: str, image: str,
+          noindex: bool = False) -> str:
+    e = _e
     ld = {
         "@context": "https://schema.org",
         "@graph": [
@@ -84,7 +98,8 @@ def _head(meta: dict, title: str, description: str, url: str, image: str) -> str
         f'<meta property="og:url" content="{e(url)}">',
         f'<meta property="og:image" content="{e(image)}">',
         '<meta name="twitter:card" content="summary_large_image">',
-        '<script type="application/ld+json">' + json.dumps(ld, ensure_ascii=False) + "</script>",
+        *(['<meta name="robots" content="noindex">'] if noindex else []),
+        '<script type="application/ld+json">' + _json_in_script(ld) + "</script>",
     ])
 
 
@@ -130,24 +145,29 @@ def write_text_files(data: dict, site: Path, data_hash: str) -> None:
     text_block = "\n".join([
         '<section class="vh" aria-labelledby="seoTitle">',
         f'<h2 id="seoTitle">{html.escape(meta["title"])} in words</h2>',
-        f'<p>{html.escape(d["map_desc"])} Categories: {html.escape(d["cats"])}. '
-        f'Period {meta["period"]["from"]} – {meta["period"]["to"]}. '
-        f'Edition of <time datetime="{meta["edition"]}">{meta["edition"]}</time>.</p>',
+        f'<p>{_e(d["map_desc"])} Categories: {_e(d["cats"])}. '
+        f'Period {_e(meta["period"]["from"])} – {_e(meta["period"]["to"])}. '
+        f'Edition of <time datetime="{_e(meta["edition"])}">{_e(meta["edition"])}</time>.</p>',
         "<h3>Groups and clusters</h3><ul>", *items, "</ul>",
         f'<p>Full method: <a href="llms-full.txt">llms-full.txt</a>.</p>',
         "</section>",
     ])
 
     pages = [("index.html", meta["title"] + " · " + meta["subtitle"], d["map_desc"], base,
-              base + "img/og.png")]
-    if cp:
-        pages.append(("compass.html", "Media Compass · " + meta["title"], cp_desc,
-                      base + "compass", base + "img/og-compass.png"))
-    for fname, title, desc, url, image in pages:
+              base + "img/og.png", False)]
+    # compass.html is rewritten every edition: without a Compass it must not keep the
+    # previous edition's description, and it leaves the index
+    if cp or (site / "compass.html").exists():
+        pages.append(("compass.html", "Media Compass · " + meta["title"],
+                      cp_desc or "This edition has no Media Compass.",
+                      base + "compass", base + "img/og-compass.png", not cp))
+    for fname, title, desc, url, image, noindex in pages:
         p = site / fname
+        if not p.exists():
+            raise InputError(f"site/{fname}: page template not found")
         text = p.read_text(encoding="utf-8")
-        text = _replace_block(text, "head", _head(meta, title, desc, url, image))
-        text = _replace_block(text, "text", text_block)
+        text = _replace_block(text, "head", _head(meta, title, desc, url, image, noindex), fname)
+        text = _replace_block(text, "text", text_block, fname)
         text = re.sub(r'src="data\.js(\?v=[0-9a-f]*)?"', f'src="data.js?v={data_hash}"', text)
         p.write_text(text, encoding="utf-8")
 
@@ -155,11 +175,11 @@ def write_text_files(data: dict, site: Path, data_hash: str) -> None:
     (site / "sitemap.xml").write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
-        "".join(f"  <url><loc>{u}</loc><lastmod>{meta['edition']}</lastmod></url>\n" for u in urls) +
+        "".join(f"  <url><loc>{_e(u)}</loc><lastmod>{_e(meta['edition'])}</lastmod></url>\n" for u in urls) +
         "</urlset>\n", encoding="utf-8")
     (site / "robots.txt").write_text(
         "User-agent: *\nAllow: /\n" +
-        (f"Content-Signal: {meta['content_signal']}\n" if meta.get("content_signal") else "") +
+        (f"Content-Signal: {' '.join(meta['content_signal'].split())}\n" if meta.get("content_signal") else "") +
         f"\nSitemap: {base}sitemap.xml\n", encoding="utf-8")
     (site / "llms-full.txt").write_text(methodology(data, d, groups), encoding="utf-8")
 

@@ -19,27 +19,89 @@ from pathlib import Path
 import graphmetrics as gm
 from atlas import build_atlas
 from compass import Lexicon, compute as compute_compass
+from errors import InputError
 from publish import write_bundle, write_text_files
 
 ID_RE = re.compile(r"^[a-z0-9._-]+$")
+HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-class InputError(Exception):
-    pass
+def read_csv(path: Path, required: set[str]) -> list[dict]:
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            missing = required - set(reader.fieldnames or [])
+            if missing:
+                raise InputError(f"{path.name}: missing column(s) {sorted(missing)}")
+            return list(reader)
+    except FileNotFoundError:
+        raise InputError(f"{path}: file not found") from None
 
 
-def read_csv(path: Path) -> list[dict]:
-    with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+def read_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise InputError(f"{path}: file not found") from None
+    except json.JSONDecodeError as e:
+        raise InputError(f"{path.name}: invalid JSON at line {e.lineno}, column {e.colno}: "
+                         f"{e.msg}") from None
 
 
-def num(v: str, kind=int):
+def num(v: str, kind, where: str):
     v = (v or "").strip()
-    return None if v == "" else kind(v)      # blank means "not measured", never zero
+    if v == "":
+        return None                          # blank means "not measured", never zero
+    try:
+        return kind(v)
+    except ValueError:
+        what = "a whole number" if kind is int else "a number"
+        raise InputError(f"{where}: {v!r} is not {what} (leave the cell empty if not measured)") from None
+
+
+def validate_project(P: dict) -> None:
+    """Fail early, with the key to fix, instead of deep inside the build."""
+    errors = []
+    for key in ("title", "subtitle", "site_url", "language", "edition", "platform"):
+        if not isinstance(P.get(key), str) or not P[key].strip():
+            errors.append(f"{key}: required text")
+    if not DATE_RE.match(str(P.get("edition", ""))):
+        errors.append("edition: use YYYY-MM-DD")
+    period = P.get("period")
+    if not isinstance(period, dict) or not all(DATE_RE.match(str(period.get(k, ""))) for k in ("from", "to")):
+        errors.append("period: needs from and to as YYYY-MM-DD")
+    for key in ("site_url", "profile_url"):
+        if P.get(key) and not re.match(r"^https?://", P[key]):
+            errors.append(f"{key}: must start with https:// or http://")
+    if P.get("profile_url") and "{name}" not in P["profile_url"]:
+        errors.append("profile_url: must contain {name}")
+    inputs = P.get("inputs")
+    if not isinstance(inputs, dict) or not inputs.get("accounts") or not inputs.get("collaborations"):
+        errors.append("inputs: accounts and collaborations are required")
+    cats = P.get("categories")
+    if not isinstance(cats, list) or not cats:
+        errors.append("categories: at least one {key, label, light, dark}")
+    else:
+        for c in cats:
+            if not isinstance(c, dict) or not c.get("key") or not c.get("label"):
+                errors.append(f"categories: {c!r} needs key and label")
+            elif not all(HEX_RE.match(str(c.get(t, ""))) for t in ("light", "dark")):
+                errors.append(f"categories.{c['key']}: light and dark must be #RRGGBB colours")
+    for g in P.get("groups", []):
+        if not isinstance(g, dict) or not g.get("id") or not g.get("name"):
+            errors.append(f"groups: {g!r} needs id and name")
+        elif not (isinstance(g.get("hue"), (int, float)) and isinstance(g.get("chroma"), (int, float))
+                  and 0 <= g["chroma"] <= 0.4):
+            errors.append(f"groups.{g['id']}: hue must be a number and chroma a number in 0..0.4")
+    if P.get("bundle", "plain") not in ("plain", "obfuscated"):
+        errors.append("bundle: plain or obfuscated")
+    if errors:
+        raise InputError("project.json:\n  " + "\n  ".join(errors))
 
 
 def load_accounts(path: Path, categories: dict) -> list[dict]:
-    rows, seen, errors = read_csv(path), set(), []
+    rows, seen, errors = read_csv(path, {"id", "name", "category"}), set(), []
     for r in rows:
         r["id"] = r["id"].strip().lower()
         if not ID_RE.match(r["id"]):
@@ -56,7 +118,7 @@ def load_accounts(path: Path, categories: dict) -> list[dict]:
 
 def load_edges(path: Path, ids: set[str]) -> list[tuple[str, str]]:
     edges, errors = set(), []
-    for k, r in enumerate(read_csv(path), start=2):
+    for k, r in enumerate(read_csv(path, {"source", "target"}), start=2):
         a, b = r["source"].strip().lower(), r["target"].strip().lower()
         missing = [x for x in (a, b) if x not in ids]
         if missing:
@@ -68,22 +130,60 @@ def load_edges(path: Path, ids: set[str]) -> list[tuple[str, str]]:
     return sorted(edges)
 
 
-def name_clusters(G, comms, misc, groups_rows, names, group_ids) -> list[dict]:
+def load_metrics(path: Path, ids: set[str]) -> dict[str, tuple]:
+    metrics, unknown = {}, []
+    for k, r in enumerate(read_csv(path, {"id", "followers", "interactions", "follower_growth"}), start=2):
+        i = r["id"].strip().lower()
+        if i not in ids:
+            unknown.append(f"line {k}: {i!r}")
+            continue
+        where = f"{path.name} line {k}"
+        metrics[i] = (num(r["followers"], int, where + ", followers"),
+                      num(r["interactions"], int, where + ", interactions"),
+                      num(r["follower_growth"], float, where + ", follower_growth"))
+    if unknown:
+        raise InputError(f"{path.name}: accounts not in accounts.csv:\n  " + "\n  ".join(unknown[:30]))
+    return metrics
+
+
+def load_groups(path: Path, ids: set[str], group_ids: set[str]) -> list[dict]:
+    """Editorial cluster names: every anchor must be a real account, every group a real group.
+
+    A typo would otherwise silently drop a label and its group from the map.
+    """
+    rows, errors = read_csv(path, {"anchor", "label", "group"}), []
+    for k, r in enumerate(rows, start=2):
+        r["anchor"] = r["anchor"].strip().lower()
+        r["label"], r["group"] = (r["label"] or "").strip(), (r["group"] or "").strip()
+        if r["anchor"] not in ids:
+            errors.append(f"line {k}: anchor {r['anchor']!r} is not in accounts.csv")
+        if r["group"] and r["group"] not in group_ids:
+            errors.append(f"line {k}: group {r['group']!r} is not one of {sorted(group_ids)}")
+        r["line"] = k
+    if errors:
+        raise InputError(f"{path.name}:\n  " + "\n  ".join(errors))
+    return rows
+
+
+def name_clusters(G, comms, misc, groups_rows, names) -> list[dict]:
     """Default name = hub; editorial rows (anchor → label, group) override it.
 
     Anchoring labels to a member account, not a cluster number, keeps them
     stable across editions: cluster numbers change every run, members do not.
     """
+    for r in groups_rows:
+        if r["anchor"] in misc:
+            print(f"warning: groups.csv line {r['line']}: {r['anchor']!r} has no cluster this "
+                  f"edition (isolated or in a small group); label {r['label']!r} is not used",
+                  file=sys.stderr)
     clusters = []
     for members in comms:
-        rows = [r for r in groups_rows if r["anchor"].lower() in members]
-        gset = {r["group"] for r in rows if r.get("group")}
-        if len(gset) > 1:
-            print(f"warning: cluster with {sorted(r['anchor'] for r in rows)} has groups {gset}; "
-                  "using the first", file=sys.stderr)
-        group = rows[0]["group"] if rows and rows[0].get("group") else None
-        if group and group not in group_ids:
-            raise InputError(f"groups.csv: unknown group {group!r}")
+        rows = [r for r in groups_rows if r["anchor"] in members]
+        groups = list(dict.fromkeys(r["group"] for r in rows if r["group"]))
+        group = groups[0] if groups else None
+        if len(groups) > 1:
+            print(f"warning: one cluster holds anchors {[r['anchor'] for r in rows]} with groups "
+                  f"{groups}; using {group!r} (the first in groups.csv)", file=sys.stderr)
         hub = gm.hub_of(G, members, names)
         # two named clusters merged in one edition keep both names
         label = " / ".join(dict.fromkeys(r["label"] for r in rows if r["label"])) or names[hub]
@@ -97,34 +197,29 @@ def name_clusters(G, comms, misc, groups_rows, names, group_ids) -> list[dict]:
 
 
 def build(project_path: Path) -> dict:
-    P = json.loads(project_path.read_text(encoding="utf-8"))
+    P = read_json(project_path)
+    validate_project(P)
     root = project_path.parent
     inp = {k: (root / v if v else None) for k, v in P["inputs"].items()}
     site = (root / P.get("output", "../site")).resolve()
 
     categories = {c["key"]: c for c in P["categories"]}
-    group_ids = {g["id"] for g in P["groups"]}
+    group_ids = {g["id"] for g in P.get("groups", [])}
     accounts = load_accounts(inp["accounts"], categories)
     ids = [a["id"] for a in accounts]
-    names = {a["id"]: a["name"] or a["id"] for a in accounts}
+    names = {a["id"]: (a["name"] or "").strip() or a["id"] for a in accounts}
     edges = load_edges(inp["collaborations"], set(ids))
 
-    metrics = {}
-    if inp.get("metrics") and inp["metrics"].exists():
-        for r in read_csv(inp["metrics"]):
-            metrics[r["id"].strip().lower()] = (num(r["followers"]), num(r["interactions"]),
-                                                num(r["follower_growth"], float))
+    metrics = load_metrics(inp["metrics"], set(ids)) if inp.get("metrics") else {}
 
     G = gm.build_graph(ids, edges)
     lv = P.get("louvain", {})
     comms, misc = gm.detect_communities(G, lv.get("resolution", 1.0), lv.get("seed", 7),
                                         lv.get("min_cluster_size", 3))
-    overrides = {}
-    if inp.get("overrides") and inp["overrides"].exists():
-        overrides = json.loads(inp["overrides"].read_text(encoding="utf-8"))
+    overrides = read_json(inp["overrides"]) if inp.get("overrides") else {}
     comms, corrections = gm.apply_overrides(comms, misc, overrides, set(ids))
-    groups_rows = read_csv(inp["groups"]) if inp.get("groups") and inp["groups"].exists() else []
-    clusters = name_clusters(G, comms, misc, groups_rows, names, group_ids)
+    groups_rows = load_groups(inp["groups"], set(ids), group_ids) if inp.get("groups") else []
+    clusters = name_clusters(G, comms, misc, groups_rows, names)
     cluster_of = {n: i for i, c in enumerate(clusters) for n in c["members"]}
 
     bt = gm.betweenness(G, lv.get("seed", 7))
@@ -147,8 +242,10 @@ def build(project_path: Path) -> dict:
         })
 
     compass = None
-    if inp.get("posts") and inp["posts"].exists() and inp.get("lexicon"):
-        lexicon = Lexicon(json.loads(inp["lexicon"].read_text(encoding="utf-8")))
+    if inp.get("posts") and inp.get("lexicon"):
+        if not inp["posts"].exists():
+            raise InputError(f"{inp['posts']}: file not found")
+        lexicon = Lexicon(read_json(inp["lexicon"]))
         compass = compute_compass(inp["posts"], lexicon, index, P.get("compass", {}))
 
     measured = [x for x in nodes if x["itr"] is not None]
@@ -163,7 +260,7 @@ def build(project_path: Path) -> dict:
         "categories": [{**{k: c[k] for k in ("key", "label", "light", "dark")},
                         "size": sum(a["category"] == c["key"] for a in accounts)}
                        for c in P["categories"]],
-        "groups": P["groups"],
+        "groups": P.get("groups", []),
         "clusters": [{k: c[k] for k in ("label", "hub", "size", "group", "misc")} for c in clusters],
         "nodes": nodes,
         "links": [[index[a], index[b]] for a, b in edges],
@@ -184,7 +281,7 @@ def build(project_path: Path) -> dict:
 def write_report(out: Path, data: dict, clusters: list[dict], G) -> None:
     out.mkdir(exist_ok=True)
     with open(out / "clusters.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["index", "label", "group", "size", "hub", "top_members"])
         for i, c in enumerate(clusters):
             top = sorted(c["members"], key=lambda n: -G.degree(n))[:6]
